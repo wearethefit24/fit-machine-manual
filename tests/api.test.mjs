@@ -135,3 +135,56 @@ test('logo stays public but uploading and deleting require an authenticated admi
   assert.equal((await fetchApi('/api/admin/logo', 'DELETE')).status, 200);
   assert.equal((await fetchApi('/api/logo')).status, 404);
 });
+
+test('cropped manual photos are scoped to machines, authenticated on upload and cleaned up on removal', async () => {
+  const { env, fetchApi } = fixture();
+  const imageId = '123e4567-e89b-42d3-a456-426614174000';
+  const secondId = '123e4567-e89b-42d3-a456-426614174001';
+  const jpeg = Uint8Array.from([255,216,255,224,0,16,74,70,73,70,0,1]).buffer;
+  const invalid = new TextEncoder().encode('<svg/>').buffer;
+  const store = (await (await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD})).json()).ok;
+  assert.equal(store, true);
+  const storeId = (await (await fetchApi('/api/admin/stores','POST',{name:'店舗'})).json()).id;
+  const areaId = (await (await fetchApi('/api/admin/areas','POST',{name:'エリア',storeId})).json()).id;
+  const values = {name:'チェストプレス',areaId,overview:'',adjustment:'',instructions:'',tips:'',safety:''};
+  const id = (await (await fetchApi('/api/admin/machines','POST',values)).json()).id;
+  const other = (await (await fetchApi('/api/admin/machines','POST',{...values,name:'別のマシン'})).json()).id;
+
+  assert.equal((await fetchApi('/api/manual-image/'+id+'/'+imageId)).status, 404);
+  assert.equal((await fetchApi('/api/admin/machines/'+id+'/images/'+imageId,'PUT',invalid)).status, 400);
+  assert.equal((await fetchApi('/api/admin/machines/'+id+'/images/'+imageId,'PUT',jpeg)).status, 200);
+  assert.equal((await fetchApi('/api/manual-image/'+id+'/'+imageId)).status, 404);
+
+  const adjustment = '@FIT_IMG_V1:'+JSON.stringify([{text:'シートを調整',imageId}]);
+  const instructions = '@FIT_IMG_V1:'+JSON.stringify([{text:'背中を付ける',imageId:secondId}]);
+  assert.equal((await fetchApi('/api/admin/machines/'+id,'PATCH',{...values,adjustment})).status, 200);
+  const photo = await fetchApi('/api/manual-image/'+id+'/'+imageId);
+  assert.equal(photo.status, 200);
+  assert.equal(photo.headers.get('content-type'), 'image/jpeg');
+  assert.deepEqual(new Uint8Array(await photo.arrayBuffer()),new Uint8Array(jpeg));
+  assert.equal((await fetchApi('/api/manual-image/'+other+'/'+imageId)).status, 404);
+  assert.equal((await fetchApi('/api/manual-image/'+id+'/'+secondId)).status, 404);
+
+  const raw = await (await fetchApi('/api/catalog')).json();
+  assert.equal(raw.machines.find(m => m.id === id).adjustment,adjustment);
+  assert.equal((await fetchApi('/api/admin/machines/'+id,'PATCH',{...values,adjustment:'@FIT_IMG_V1:{bad json'})).status, 400);
+
+  // Removing the image reference deletes its stored KV value through the cleanup queue.
+  assert.equal((await fetchApi('/api/admin/machines/'+id,'PATCH',values)).status, 200);
+  assert.equal((await fetchApi('/api/manual-image/'+id+'/'+imageId)).status, 404);
+  assert.equal(env.VIDEO_KV.values.has('manual:'+id+':'+imageId),false);
+
+  // Deleting a store cascades to all machines and queued image data.
+  assert.equal((await fetchApi('/api/admin/machines/'+id+'/images/'+secondId,'PUT',jpeg)).status, 200);
+  assert.equal((await fetchApi('/api/admin/machines/'+id,'PATCH',{...values,instructions})).status, 200);
+  assert.equal((await fetchApi('/api/admin/stores/'+storeId,'DELETE')).status, 200);
+  assert.equal(env.VIDEO_KV.values.has('manual:'+id+':'+secondId),false);
+});
+
+test('manual photo uploads require an admin session', async () => {
+  const { fetchApi } = fixture();
+  const imageId='123e4567-e89b-42d3-a456-426614174003';
+  const machineId='123e4567-e89b-42d3-a456-426614174004';
+  const jpeg = Uint8Array.from([255,216,255,0]).buffer;
+  assert.equal((await fetchApi('/api/admin/machines/'+machineId+'/images/'+imageId,'PUT',jpeg)).status, 401);
+});
