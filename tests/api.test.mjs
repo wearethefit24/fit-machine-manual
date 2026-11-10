@@ -24,10 +24,11 @@ class MockD1 {
   }
 }
 class MockKV {
-  constructor() { this.values = new Map(); }
-  async put(k, v) { this.values.set(k, v.slice(0)); }
+  constructor() { this.values = new Map(); this.meta = new Map(); }
+  async put(k, v, options = {}) { this.values.set(k, v.slice(0)); if (options.metadata) this.meta.set(k, options.metadata); }
   async get(k, type) { return this.values.get(k) || null; }
-  async delete(k) { this.values.delete(k); }
+  async getWithMetadata(k, type) { return { value: this.values.get(k) || null, metadata: this.meta.get(k) || null }; }
+  async delete(k) { this.values.delete(k); this.meta.delete(k); }
 }
 function fixture() {
   const env = { DB: new MockD1(), VIDEO_KV: new MockKV(), ADMIN_PASSWORD: 'this-is-a-long-strong-password', ADMIN_SESSION_SECRET: 'very_long_secret_string_of_more_than_32_characters' };
@@ -113,4 +114,24 @@ test('mass deletion is completed in KV batches without exceeding the per-request
   }
   assert.equal(env.VIDEO_KV.values.size,0);
   assert.equal((await env.DB.prepare('SELECT count(*) AS count FROM video_cleanup_jobs').first()).count,0);
+});
+
+test('logo stays public but uploading and deleting require an authenticated admin', async () => {
+  const { env, fetchApi } = fixture();
+  assert.equal((await fetchApi('/api/logo')).status, 404);
+  const bytes = Uint8Array.from([137,80,78,71,13,10,26,10,0,0,0,0]).buffer;
+  assert.equal((await fetchApi('/api/admin/logo', 'PUT', bytes)).status, 401);
+  await fetchApi('/api/admin/login', 'POST', { password: env.ADMIN_PASSWORD });
+  const bad = await fetchApi('/api/admin/logo', 'PUT', new TextEncoder().encode('<svg/>').buffer);
+  assert.equal(bad.status, 400);
+  assert.equal((await fetchApi('/api/admin/logo', 'PUT', bytes)).status, 200);
+  const publicLogo = await fetchApi('/api/logo');
+  assert.equal(publicLogo.status, 200);
+  assert.equal(publicLogo.headers.get('content-type'), 'image/png');
+  assert.deepEqual(new Uint8Array(await publicLogo.arrayBuffer()), new Uint8Array(bytes));
+  const head = await fetchApi('/api/logo', 'HEAD');
+  assert.equal(head.status, 200);
+  assert.equal((await head.arrayBuffer()).byteLength, 0);
+  assert.equal((await fetchApi('/api/admin/logo', 'DELETE')).status, 200);
+  assert.equal((await fetchApi('/api/logo')).status, 404);
 });
