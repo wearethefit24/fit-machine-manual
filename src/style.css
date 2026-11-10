@@ -86,3 +86,52 @@ select, input, textarea { color-scheme: dark; }
 .skeleton { background:linear-gradient(110deg,#17232a 8%,#223139 20%,#17232a 33%); background-size:200% 100%; animation:shimmer 1.7s linear infinite; }
 @keyframes shimmer { to { background-position-x:-200%; } }
 @media (max-width:355px) { .shell { width:calc(100% - 26px); } .selection-card { gap:9px; padding:12px; } .selection-icon { width:43px; height:43px; } .top-label { font-size:8px; } .brand-word { font-size:14px; } }
+
+/* FIT MANUAL monochrome theme — black, white and white outlines */
+:root { color:#fff; background:#000; color-scheme:dark; }
+body { background:#000; color:#fff; }
+.top-header { background:#000; border-bottom:1px solid rgba(255,255,255,.36); }
+.brand-icon { color:#000; background:#fff; box-shadow:none; }
+.brand-word, .brand-word span, .hero-title, .hero-period, .eyebrow, .card-title { color:#fff; }
+.brand-sub, .top-label, .hero-sub, .back-btn, .list-caption, .selection-index, .footer-note,
+.video-bar, .manual-text, .field-label, .url-text, .admin-footer { color:#d1d1d1; }
+.tiny-dot, .live-marker { background:#fff; box-shadow:none; }
+.selection-card { background:#090909; border:1px solid rgba(255,255,255,.34); }
+.selection-card:hover, .selection-card:focus-visible { border-color:#fff; }
+.selection-icon, .empty-icon, .section-icon, .row-icon { background:#171717; color:#fff; border:1px solid rgba(255,255,255,.3); }
+.empty { background:#080808; border:1px dashed rgba(255,255,255,.48); }
+.video-container { background:#080808; border:1px solid rgba(255,255,255,.35); }
+.video-placeholder { background:#090909; color:#e2e2e2; }
+.machine-summary-badge { background:#090909; color:#fff; border:1px solid rgba(255,255,255,.58); }
+.manual-section, .admin-card, .panel, .login-card {
+  background:#090909; border:1px solid rgba(255,255,255,.37);
+}
+.manual-text { color:#eee; }
+.btn-primary { background:#fff; color:#000; border:1px solid #fff; }
+.btn-primary:hover { background:#e8e8e8; filter:none; }
+.btn-secondary { background:#111; color:#fff; border:1px solid rgba(255,255,255,.6); }
+.btn-secondary:hover { background:#222; }
+.btn-danger { background:#100f0f; color:#fff; border:1px solid rgba(255,255,255,.6); }
+.staff-badge { background:#111; color:#fff; border:1px solid rgba(255,255,255,.48); }
+.tab-bar { background:#050505; border:1px solid rgba(255,255,255,.32); }
+.chip { color:#d6d6d6; }
+.chip-active { background:#fff; color:#000; box-shadow:none; }
+.count { background:#fff; color:#000; }
+.field { background:#050505; color:#fff; border:1px solid rgba(255,255,255,.5); }
+.field:focus { border-color:#fff; box-shadow:0 0 0 2px rgba(255,255,255,.25); }
+.field::placeholder { color:#a0a0a0; }
+.admin-row, .machine-row { border-bottom:1px solid rgba(255,255,255,.25); }
+.icon-button, .arrow-button { color:#fff; background:#131313; border:1px solid rgba(255,255,255,.46); }
+.icon-button:hover, .arrow-button:hover:not(:disabled) { background:#242424; }
+.icon-button.danger { color:#fff; }
+.arrow-button:disabled { color:#888; }
+.divider-line { background:rgba(255,255,255,.32); }
+.upload-zone { background:#0b0b0b; border:1px dashed rgba(255,255,255,.6); color:#fff; }
+.existing-video { background:#0a0a0a; border:1px solid rgba(255,255,255,.45); }
+.qr-frame { background:#fff; color:#000; border:1px solid #fff; }
+.alert, .alert-ok { background:#101010; border:1px solid rgba(255,255,255,.56); color:#fff; }
+.skeleton { background:linear-gradient(110deg,#151515 8%,#303030 20%,#151515 33%); background-size:200% 100%; }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline:2px solid #fff; outline-offset:3px;
+}
+::selection { color:#000; background:#fff; }
