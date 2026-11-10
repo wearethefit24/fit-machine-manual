@@ -2,6 +2,18 @@
 const CHUNK_SIZE = 8 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
 const SESSION_SECONDS = 12 * 60 * 60;
+const LOGO_KEY = 'site:logo';
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+
+// Only raster images are accepted, checked against actual bytes (not an untrusted MIME header).
+export function logoMime(bytes) {
+  const a = new Uint8Array(bytes);
+  if (a.length >= 8 && [137,80,78,71,13,10,26,10].every((n,i) => a[i] === n)) return 'image/png';
+  if (a.length >= 3 && a[0] === 255 && a[1] === 216 && a[2] === 255) return 'image/jpeg';
+  if (a.length >= 12 && String.fromCharCode(...a.slice(0,4)) === 'RIFF' && String.fromCharCode(...a.slice(8,12)) === 'WEBP') return 'image/webp';
+  if (a.length >= 6 && ['GIF87a','GIF89a'].includes(String.fromCharCode(...a.slice(0,6)))) return 'image/gif';
+  return null;
+}
 const encoder = new TextEncoder();
 
 function json(value, status = 200, headers = {}) {
@@ -71,6 +83,19 @@ async function login(req, env) {
   const sig = await hmac(expires, env.ADMIN_SESSION_SECRET);
   return json({ ok: true }, 200, { 'set-cookie': `fit_admin=${expires}.${sig}; HttpOnly; Secure; SameSite=Strict; Path=/api/admin; Max-Age=${SESSION_SECONDS}` });
 }
+async function serveLogo(req, env) {
+  const { value, metadata } = await env.VIDEO_KV.getWithMetadata(LOGO_KEY, 'arrayBuffer');
+  if (!value) return new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } });
+  return new Response(req.method === 'HEAD' ? null : value, {
+    status: 200,
+    headers: {
+      'content-type': metadata?.mimeType || 'image/png',
+      'cache-control': 'no-store, max-age=0',
+      'x-content-type-options': 'nosniff'
+    }
+  });
+}
+
 async function catalog(db) {
   const [storeRows, areaRows, machineRows] = await Promise.all([
     db.prepare('SELECT id,name,position FROM stores ORDER BY position,name').all(),
@@ -122,6 +147,22 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
   if (!(await sessionValid(req, env))) return fail('管理者認証が必要です。', 401);
   if (parts[0] === 'session' && method === 'GET') return json({ ok: true });
   if (parts[0] === 'maintenance' && method === 'POST') return json(await drainCleanup(env));
+  if (parts[0] === 'logo') {
+    if (method === 'PUT') {
+      if (Number(req.headers.get('content-length') || 0) > MAX_LOGO_BYTES) return fail('画像は2MiB以内にしてください。', 413);
+      const data = await req.arrayBuffer();
+      if (!data.byteLength || data.byteLength > MAX_LOGO_BYTES) return fail('画像は2MiB以内にしてください。', 413);
+      const mimeType = logoMime(data);
+      if (!mimeType) return fail('PNG・JPEG・WebP・GIF画像を選択してください。');
+      await env.VIDEO_KV.put(LOGO_KEY, data, { metadata: { mimeType } });
+      return json({ ok: true });
+    }
+    if (method === 'DELETE') {
+      await env.VIDEO_KV.delete(LOGO_KEY);
+      return json({ ok: true });
+    }
+    return fail('メソッドが許可されていません。', 405);
+  }
   const [type, id, action, index] = parts;
   const db = env.DB;
 
@@ -312,6 +353,7 @@ export async function handleApi(context) {
   if (path[0] !== 'api') return fail('APIがありません。', 404);
   try {
     if (req.method === 'GET' && path.length === 2 && path[1] === 'catalog') return json(await catalog(env.DB));
+    if ((req.method === 'GET' || req.method === 'HEAD') && path.length === 2 && path[1] === 'logo') return serveLogo(req, env);
     if ((req.method === 'GET' || req.method === 'HEAD') && path[1] === 'video' && path.length === 3) return serveVideo(req, env, path[2]);
     if (path[1] === 'admin') {
       if (!['GET', 'POST', 'PATCH', 'DELETE', 'PUT'].includes(req.method)) return fail('メソッドが許可されていません。', 405);
