@@ -663,6 +663,35 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   const [file, setFile] = useState(null);
   const [pending, setPending] = useState(false);
   const [progress, setProgress] = useState('');
+  const [imagePreviews, setImagePreviews] = useState({});
+  const imagePreviewsRef = useRef({});
+  const workingMachineId = useRef(machine?.id || null);
+  const [cropRequest, setCropRequest] = useState(null);
+  useEffect(() => () => {
+    Object.values(imagePreviewsRef.current).forEach(photo => URL.revokeObjectURL(photo.url));
+  }, []);
+  function beginCrop(field, index, chosenFile) {
+    if (chosenFile.size > 20 * 1024 * 1024) {
+      notify('元の画像は20MiB以内のものを選択してください。', true);
+      return;
+    }
+    setCropRequest({ field, index, file: chosenFile });
+  }
+  function acceptCrop(blob) {
+    if (!cropRequest) return;
+    const imageId = crypto.randomUUID();
+    const previewUrl = URL.createObjectURL(blob);
+    const next = { ...imagePreviewsRef.current, [imageId]: { blob, url: previewUrl } };
+    imagePreviewsRef.current = next;
+    setImagePreviews(next);
+    setFields(previous => {
+      const items = readManualItems(previous[cropRequest.field]);
+      if (!items[cropRequest.index]) return previous;
+      items[cropRequest.index] = { ...items[cropRequest.index], imageId };
+      return { ...previous, [cropRequest.field]: writeManualItems(items) };
+    });
+    setCropRequest(null);
+  }
   const shownAreas = catalog.areas.filter(a => a.storeId === storeId);
   function onStoreChange(id) { setStoreId(id); setAreaId(catalog.areas.find(a => a.storeId === id)?.id || ''); }
   async function upload(machineId, sourceFile) {
@@ -682,8 +711,36 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
     if (file && (file.size > 80 * 1024 * 1024 || !['video/mp4', 'video/webm', 'video/quicktime'].includes(file.type || (file.name.toLowerCase().endsWith('.mp4') ? 'video/mp4' : '')))) { notify('MP4・WebM・MOV、80MiB以内の動画を選択してください。', true); return; }
     try {
       setPending(true); setProgress('マシン情報を保存しています…');
-      const result = await send(machine ? `/api/admin/machines/${machine.id}` : '/api/admin/machines', machine ? 'PATCH' : 'POST', { name: name.trim(), areaId, ...fields });
-      const id = machine?.id || result.id;
+      let id = workingMachineId.current;
+      let newlyCreated = false;
+      if (!id) {
+        // Create the machine before uploading photos, without exposing unuploaded image IDs.
+        const initial = { ...fields };
+        for (const field of ['adjustment', 'instructions']) {
+          initial[field] = writeManualItems(readManualItems(fields[field]).map(item => ({
+            ...item, imageId: imagePreviews[item.imageId] ? null : item.imageId
+          })));
+        }
+        const result = await send('/api/admin/machines', 'POST', { name: name.trim(), areaId, ...initial });
+        id = result.id;
+        workingMachineId.current = id;
+        newlyCreated = true;
+      }
+      const referenced = new Set(['adjustment', 'instructions'].flatMap(field =>
+        readManualItems(fields[field]).map(item => item.imageId).filter(Boolean)));
+      const uploads = [...referenced].filter(imageId => imagePreviews[imageId]);
+      for (let index = 0; index < uploads.length; index++) {
+        const imageId = uploads[index];
+        setProgress('手順画像を保存しています… ' + (index + 1) + ' / ' + uploads.length);
+        await api(`/api/admin/machines/${id}/images/${imageId}`, {
+          method: 'PUT', headers: { 'content-type': 'image/jpeg' },
+          body: imagePreviews[imageId].blob
+        });
+      }
+      if (!newlyCreated || uploads.length) {
+        setProgress('説明文と画像を保存しています…');
+        await send(`/api/admin/machines/${id}`, 'PATCH', { name: name.trim(), areaId, ...fields });
+      }
       if (file) await upload(id, file);
       await refresh(); await tidy(); setFile(null); notify('マシンの情報を保存しました。'); onSaved(id);
     } catch (e) { notify(`${e.message}（情報だけ保存されている場合があります）`, true); await refresh(); }
@@ -700,8 +757,12 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
     {CONTENT_FIELDS.map(([key, title], i) => key === 'overview'
       ? <Field key={key} title={`${num(i + 1)} ${title}`}><textarea className={`${fieldInput} textarea`} rows={3} value={fields[key]} onChange={e => setFields(prev => ({ ...prev, [key]: e.target.value }))} maxLength={15000} placeholder={`${title}を入力してください`}/></Field>
       : <ManualItemsEditor key={key} title={`${num(i + 1)} ${title}`} field={key}
-          value={fields[key]} onChange={value => setFields(prev => ({ ...prev, [key]: value }))}/>)}
-    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'マシン情報を更新' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}</div>;
+          value={fields[key]} onChange={value => setFields(prev => ({ ...prev, [key]: value }))}
+          onCrop={beginCrop} imagePreviews={imagePreviews} machineId={workingMachineId.current}/>)}
+    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'マシン情報を更新' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}
+    {cropRequest && <ManualImageCropper file={cropRequest.file} onApply={acceptCrop}
+      onCancel={() => setCropRequest(null)}/>}
+  </div>;
 }
 function MachinesAdmin({ catalog, refresh, notify, tidy }) {
   const [storeFilter, setStoreFilter] = useState('');
