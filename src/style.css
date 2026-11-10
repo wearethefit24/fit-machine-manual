@@ -886,12 +886,15 @@ button, a { touch-action: manipulation; }
 .manual-exercise-panel .manual-exercise-part {
   display: block;
   margin: 0;
-  padding: 24px 20px;
+  padding: 24px 18px;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
   color: #fff;
+}
+.manual-exercise-panel .manual-exercise-part-instructions {
+  padding-left: 13px;
 }
 .manual-exercise-panel .manual-exercise-part-tips {
   border-top: 1px solid rgba(255,255,255,.35);
@@ -939,8 +942,8 @@ button, a { touch-action: manipulation; }
 }
 .manual-exercise-panel .manual-steps li {
   display: grid;
-  grid-template-columns: 36px minmax(0,1fr);
-  gap: 12px;
+  grid-template-columns: 29px minmax(0,1fr);
+  gap: 9px;
   padding: 0 0 17px;
   align-items: start;
   color: #f5f5f5;
@@ -960,14 +963,14 @@ button, a { touch-action: manipulation; }
   display: flex;
   justify-content: center;
   align-items: center;
-  width: 35px;
-  height: 35px;
+  width: 28px;
+  height: 28px;
   margin-top: 1px;
   border: 1.5px solid #77dba1;
   border-radius: 50%;
   background: transparent;
   color: #94efb8;
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 850;
 }
 .manual-exercise-panel .manual-bullets {
@@ -993,6 +996,7 @@ button, a { touch-action: manipulation; }
 }
 @media (max-width: 360px) {
   .manual-exercise-panel .manual-exercise-part { padding: 20px 15px; }
-  .manual-exercise-panel .manual-steps li { grid-template-columns: 32px minmax(0,1fr); gap: 10px; }
-  .manual-exercise-panel .manual-step-number { width: 31px; height: 31px; font-size: 15px; }
+  .manual-exercise-panel .manual-exercise-part-instructions { padding-left: 11px; }
+  .manual-exercise-panel .manual-steps li { grid-template-columns: 27px minmax(0,1fr); gap: 8px; }
+  .manual-exercise-panel .manual-step-number { width: 26px; height: 26px; font-size: 13px; }
 }
