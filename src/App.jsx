@@ -235,8 +235,8 @@ function ManualGuideSection({ field, title, kind, Icon, value }) {
             <span>{stripPrefix(line) || line}</span>
           </li>)}
         </ol>
-      : kind === 'bullets' ? <ul className="manual-bullets">
-          {lines.map((line, i) => <li key={i}>{stripPrefix(line) || line}</li>)}
+      : kind === 'bullets' || kind === 'warning' ? <ul className="manual-bullets">
+          {lines.map((line, i) => <li key={i}><span className="manual-bullet-symbol" aria-hidden="true">・</span><span>{stripPrefix(line) || line}</span></li>)}
         </ul>
       : <p className="manual-guide-text">{text}</p>}
   </section>;
@@ -423,6 +423,50 @@ function AreasAdmin({ catalog, refresh, notify, tidy }) {
   <div className="admin-card"><h3 className="card-title">登録済みエリア <span className="count">{catalog.areas.length}</span></h3>{catalog.areas.length ? catalog.areas.map(a => <div className="admin-row" key={a.id}><span className="row-icon"><Layers3 size={18}/></span><div className="flex-1 min-w-0"><p className="font-medium text-white truncate">{a.name}</p><p className="text-xs text-neutral-300 mt-0.5">{catalog.stores.find(s => s.id === a.storeId)?.name || ''} ・ {catalog.machines.filter(m => m.areaId === a.id).length} 台</p></div><SmallActions onEdit={() => { setEditing(a.id); setName(a.name); setStoreId(a.storeId); }} onDelete={() => remove(a)}/></div>) : <Empty title="エリアはまだありません" description="店舗を登録した後、エリアを追加してください。"/>}</div></div>;
 }
 const initialFields = { overview: '', adjustment: '', instructions: '', tips: '', safety: '' };
+
+function ManualItemsEditor({ title, field, value, onChange }) {
+  const items = (value || '').split(/\r?\n/);
+  const numbered = field === 'adjustment' || field === 'instructions';
+  const marker = index => numbered
+    ? index < 20 ? String.fromCodePoint(0x2460 + index) : String(index + 1) + '.'
+    : '・';
+  function update(index, text) {
+    const next = items.slice();
+    // Each row represents one item; pasted line breaks must not create unnumbered rows.
+    next[index] = text.replace(/\r?\n/g, ' ');
+    onChange(next.join('\n'));
+  }
+  function remove(index) {
+    const next = items.filter((_, i) => i !== index);
+    onChange((next.length ? next : ['']).join('\n'));
+  }
+  return <div className="manual-items-editor">
+    <div className="field-label">{title}</div>
+    <div className="manual-items-rows">
+      {items.map((item, index) => <div className="manual-item-row" key={index}>
+        <span className="manual-item-marker" aria-hidden="true">{marker(index)}</span>
+        <textarea
+          rows={2}
+          className="field manual-item-input"
+          aria-label={title + ' ' + marker(index)}
+          placeholder={title + 'を入力'}
+          value={item}
+          maxLength={15000}
+          onChange={event => update(index, event.target.value)}
+        />
+        <button type="button" className="icon-button manual-item-remove"
+          aria-label={title + 'の' + marker(index) + 'を削除'}
+          title="この項目を削除" disabled={items.length === 1}
+          onClick={() => remove(index)}><X size={17}/></button>
+      </div>)}
+    </div>
+    <button type="button" className="btn btn-secondary manual-item-add"
+      onClick={() => onChange([...items, ''].join('\n'))}>
+      <Plus size={18}/>追加
+    </button>
+  </div>;
+}
+
 function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCancel, notify, tidy }) {
   const initialArea = catalog.areas.find(a => a.id === (machine?.areaId || initialAreaId)) || catalog.areas[0];
   const [storeId, setStoreId] = useState(initialArea?.storeId || '');
@@ -466,7 +510,10 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
     <div className="space-y-4"><Field title="店舗"><select className={fieldInput} value={storeId} onChange={e => onStoreChange(e.target.value)}>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field><Field title="エリア"><select className={fieldInput} value={areaId} onChange={e => setAreaId(e.target.value)}>{shownAreas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field><Field title="マシン名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：チェストプレス"/></Field>
     <div className="divider-line"/><Field title="動画ファイル（直接アップロード）" hint="MP4推奨 / 最大80MiB。動画がない場合は文章のみでも登録できます。"><label className="upload-zone"><UploadCloud size={25} className="text-white"/><span className="text-sm text-white">{file ? file.name : 'タップして動画を選ぶ'}</span><span className="text-xs text-neutral-300">MP4 / WebM / MOV</span><input type="file" className="sr-only" accept=".mp4,.webm,.mov,video/mp4,video/webm,video/quicktime" onChange={e => setFile(e.target.files?.[0] || null)}/></label></Field>
     {machine?.videoId && <div className="existing-video"><div className="flex gap-2 items-center text-sm text-white"><CheckCircle2 size={17} className="text-white"/>登録済み動画：{machine.videoFilename || '動画ファイル'}</div><div className="flex gap-2 mt-3"><a href={`/api/video/${machine.videoId}`} target="_blank" rel="noopener noreferrer" className="btn btn-secondary text-xs flex-1"><Video size={15}/> 動画を開く</a><button className="btn btn-danger text-xs" onClick={deleteVideo}><Trash2 size={15}/> 削除</button></div></div>}
-    {CONTENT_FIELDS.map(([key, title], i) => <Field key={key} title={`${num(i + 1)} ${title}`}><textarea className={`${fieldInput} textarea`} rows={key === 'instructions' ? 5 : 3} value={fields[key]} onChange={e => setFields(prev => ({ ...prev, [key]: e.target.value }))} maxLength={15000} placeholder={`${title}を入力してください`}/></Field>)}
+    {CONTENT_FIELDS.map(([key, title], i) => key === 'overview'
+      ? <Field key={key} title={`${num(i + 1)} ${title}`}><textarea className={`${fieldInput} textarea`} rows={3} value={fields[key]} onChange={e => setFields(prev => ({ ...prev, [key]: e.target.value }))} maxLength={15000} placeholder={`${title}を入力してください`}/></Field>
+      : <ManualItemsEditor key={key} title={`${num(i + 1)} ${title}`} field={key}
+          value={fields[key]} onChange={value => setFields(prev => ({ ...prev, [key]: value }))}/>)}
     </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'マシン情報を更新' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}</div>;
 }
 function MachinesAdmin({ catalog, refresh, notify, tidy }) {
