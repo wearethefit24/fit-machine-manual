@@ -404,7 +404,7 @@ function Login({ onLogin, notify }) {
   async function submit(e) { e.preventDefault(); try { setPending(true); await send('/api/admin/login', 'POST', { password }); setPassword(''); onLogin(); } catch (err) { notify(err.message, true); } finally { setPending(false); } }
   return <div className="min-h-[75vh] flex items-center justify-center"><form className="login-card w-full" onSubmit={submit}><div className="mx-auto w-15 h-15 rounded-2xl flex items-center justify-center bg-white/10 text-white mb-6"><LockKeyhole size={28}/></div><div className="eyebrow text-center">STAFF ONLY</div><h1 className="text-2xl font-bold text-center mt-3 mb-3">管理者アクセス</h1><p className="text-sm text-neutral-200 text-center leading-relaxed mb-6">一般の利用者は認証不要です。<br/>編集には管理者パスワードが必要です。</p><Field title="管理者パスワード"><input type="password" autoComplete="current-password" className={fieldInput} value={password} onChange={e => setPassword(e.target.value)} placeholder="管理者パスワード" required /></Field><button className="btn btn-primary w-full mt-5" disabled={pending}>{pending ? <LoaderCircle size={18} className="animate-spin"/> : <LockKeyhole size={17}/>}管理画面を開く</button></form></div>;
 }
-function Admin({ catalog, refresh, error }) {
+function Admin({ catalog, refresh, error, logoRevision, onLogoChanged }) {
   const [auth, setAuth] = useState('checking');
   const [tab, setTab] = useState('machines');
   const [notice, setNotice] = useState(null);
@@ -424,8 +424,8 @@ function Admin({ catalog, refresh, error }) {
       {error && <div className="mb-4"><Alert>{error}</Alert></div>}
       {auth === 'checking' ? <Skeleton/> : auth === 'out' ? <Login onLogin={() => { setAuth('in'); refresh(); }} notify={notify}/> : <>
         <div className="flex items-center justify-between mb-5"><span className="staff-badge"><Check size={14}/> 管理者モード</span><button onClick={logout} className="text-xs text-neutral-200 flex items-center gap-1 hover:text-white"><LogOut size={15}/>ログアウト</button></div>
-        <div className="tab-bar"><Chip active={tab==='machines'} onClick={() => setTab('machines')}><Dumbbell size={17}/>マシン</Chip><Chip active={tab==='areas'} onClick={() => setTab('areas')}><Layers3 size={17}/>エリア</Chip><Chip active={tab==='stores'} onClick={() => setTab('stores')}><MapPin size={17}/>店舗</Chip></div>
-        {tab === 'machines' ? <MachinesAdmin catalog={catalog} refresh={refresh} notify={notify} tidy={tidy}/> : tab === 'areas' ? <AreasAdmin catalog={catalog} refresh={refresh} notify={notify} tidy={tidy}/> : <StoresAdmin catalog={catalog} refresh={refresh} notify={notify} tidy={tidy}/>}
+        <div className="tab-bar tab-bar-four"><Chip active={tab==='machines'} onClick={() => setTab('machines')}><Dumbbell size={17}/>マシン</Chip><Chip active={tab==='areas'} onClick={() => setTab('areas')}><Layers3 size={17}/>エリア</Chip><Chip active={tab==='stores'} onClick={() => setTab('stores')}><MapPin size={17}/>店舗</Chip><Chip active={tab==='logo'} onClick={() => setTab('logo')}><Film size={17}/>ロゴ</Chip></div>
+        {tab === 'machines' ? <MachinesAdmin catalog={catalog} refresh={refresh} notify={notify} tidy={tidy}/> : tab === 'areas' ? <AreasAdmin catalog={catalog} refresh={refresh} notify={notify} tidy={tidy}/> : tab === 'stores' ? <StoresAdmin catalog={catalog} refresh={refresh} notify={notify} tidy={tidy}/> : <LogoAdmin logoRevision={logoRevision} onLogoChanged={onLogoChanged} notify={notify}/>} 
         <div className="admin-footer"><ShieldAlert size={16}/> QRコードからの視聴にログインは不要です。<br/>管理者パスワードは第三者に共有しないでください。</div>
       </>}
     </main></div>;
@@ -433,5 +433,10 @@ function Admin({ catalog, refresh, error }) {
 export default function App() {
   const { catalog, loading, error, refresh } = useCatalog();
   const [route, navigate] = useRoute();
-  return route === '/admin' || route.startsWith('/admin/') ? <Admin catalog={catalog} refresh={refresh} error={error}/> : <Viewer catalog={catalog} loading={loading} error={error} route={route} navigate={navigate} refresh={refresh}/>;
+  const [logoRevision, setLogoRevision] = useState(() => Date.now());
+  const onLogoChanged = () => setLogoRevision(Date.now());
+  const page = route === '/admin' || route.startsWith('/admin/')
+    ? <Admin catalog={catalog} refresh={refresh} error={error} logoRevision={logoRevision} onLogoChanged={onLogoChanged}/>
+    : <Viewer catalog={catalog} loading={loading} error={error} route={route} navigate={navigate} refresh={refresh}/>;
+  return <><SiteHeader logoRevision={logoRevision}/><div className="page-under-header">{page}</div></>;
 }
