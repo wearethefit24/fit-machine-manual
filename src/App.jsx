@@ -742,7 +742,12 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
         await send(`/api/admin/machines/${id}`, 'PATCH', { name: name.trim(), areaId, ...fields });
       }
       if (file) await upload(id, file);
-      await refresh(); await tidy(); setFile(null); notify('マシンの情報を保存しました。'); onSaved(id);
+      await refresh(); await tidy(); setFile(null);
+      const previewsToRevoke = imagePreviewsRef.current;
+      imagePreviewsRef.current = {};
+      setImagePreviews({});
+      Object.values(previewsToRevoke).forEach(photo => URL.revokeObjectURL(photo.url));
+      notify('マシンの情報を保存しました。'); onSaved(id);
     } catch (e) { notify(`${e.message}（情報だけ保存されている場合があります）`, true); await refresh(); }
     finally { setPending(false); setProgress(''); }
   }
