@@ -209,8 +209,37 @@ function LogoAdmin({ logoRevision, onLogoChanged, notify }) {
   </section>;
 }
 
-function ViewerSection({ index, title, description, Icon, textValue }) {
-  return <section className="manual-section"><div className="section-heading"><div className="section-icon"><Icon size={19}/></div><div><div className="eyebrow">STEP {num(index)}</div><h2 className="font-semibold text-[17px] text-white">{title}</h2></div></div><p className={`manual-text ${textValue ? '' : 'text-neutral-300'}`}>{textValue || '内容はまだ登録されていません。'}</p></section>;
+// Display already-saved text without inventing instructions: one newline = one numbered/bulleted item.
+const GUIDE_SECTIONS = [
+  { field: 'overview', title: '概要', kind: 'text', Icon: Info },
+  { field: 'adjustment', title: 'マシン調整方法', kind: 'steps', Icon: Settings2 },
+  { field: 'instructions', title: '実施手順', kind: 'steps', Icon: ClipboardList },
+  { field: 'tips', title: 'ポイント', kind: 'bullets', Icon: Sparkles },
+  { field: 'safety', title: '安全上の注意事項', kind: 'warning', Icon: ShieldAlert },
+];
+
+function ManualGuideSection({ field, title, kind, Icon, value }) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const stripPrefix = line => line.replace(/^(?:[0-9]{1,2}[.．、)]|[①-⑳]|[・●•\-])\s*/, '').trim();
+  return <section className={'manual-guide-section' + (kind === 'warning' ? ' manual-guide-warning' : '')}
+    aria-labelledby={'manual-' + field}>
+    <div className="manual-guide-heading">
+      <span className="manual-guide-icon" aria-hidden="true"><Icon size={21} strokeWidth={2}/></span>
+      <h2 id={'manual-' + field} className="manual-guide-title">{title}</h2>
+    </div>
+    {!text ? <p className="manual-guide-empty">内容はまだ登録されていません。</p>
+      : kind === 'steps' ? <ol className="manual-steps">
+          {lines.map((line, i) => <li key={i}>
+            <span className="manual-step-number" aria-hidden="true">{i + 1}</span>
+            <span>{stripPrefix(line) || line}</span>
+          </li>)}
+        </ol>
+      : kind === 'bullets' ? <ul className="manual-bullets">
+          {lines.map((line, i) => <li key={i}>{stripPrefix(line) || line}</li>)}
+        </ul>
+      : <p className="manual-guide-text">{text}</p>}
+  </section>;
 }
 function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   const ids = route.split('/').filter(Boolean);
@@ -303,18 +332,45 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
     </div>;
   }
 
+  // Dedicated machine-manual layout; QR routes open here directly.
+  if (isMachinePage) {
+    return <div className="min-h-screen">
+      <main className="shell manual-page">
+        <div className="manual-back"><Back onClick={backAction} label="マシン一覧へ戻る"/></div>
+        {loading ? <Skeleton/>
+          : error ? <div className="mt-6"><Alert>{error}</Alert><button onClick={refresh} className="btn btn-primary mt-4">再読み込み</button></div>
+          : !machine ? <Empty title="マシンが見つかりません" description="URLが変更されたか、マシンが削除された可能性があります。"/>
+          : <>
+            <header className="manual-title-area">
+              <h1 className="manual-machine-name">{machine.name}</h1>
+              <p className="manual-location">{[currentStore?.name, currentArea?.name].filter(Boolean).join(' / ')}</p>
+            </header>
+            {machine.videoId && <div className="manual-video-frame">
+              <video className="manual-video-player" src={'/api/video/' + machine.videoId}
+                controls playsInline preload="metadata" aria-label={machine.name + 'の使用動画'}>
+                お使いのブラウザは動画の再生に対応していません。
+              </video>
+            </div>}
+            <div className="manual-guide-sections">
+              {GUIDE_SECTIONS.map(({ field, title, kind, Icon }) =>
+                <ManualGuideSection key={field} field={field} title={title}
+                  kind={kind} Icon={Icon} value={machine[field]}/>)}
+            </div>
+            <button type="button" className="btn btn-secondary w-full manual-return" onClick={backAction}>
+              <ArrowLeft size={18}/>マシン一覧に戻る
+            </button>
+          </>}
+      </main>
+    </div>;
+  }
+
   return <div className="min-h-screen">
     <main className={isMachinePage ? 'shell pb-24' : 'shell pb-48'}>
       <div className="hero"><div className="mb-4">{(isMachinePage || isAreaPage || isStorePage) && <Back onClick={backAction}/>}</div>
         <div className="eyebrow tracking-[.24em]">{label}</div><h1 className="hero-title">{title}<span className="hero-period">.</span></h1>
         <p className="hero-sub">{isMachinePage ? [currentStore?.name, currentArea?.name, machine?.name].filter(Boolean).join(' / ') : isAreaPage ? `${currentStore?.name || '店舗'}のマシンを選択してください` : isStorePage ? `${store?.name || '店舗'}のエリアを選択してください` : 'ご利用中の店舗を選択してください'}</p>
       </div>
-      {loading ? <Skeleton/> : error ? <div className="mt-6"><Alert>{error}</Alert><button onClick={refresh} className="btn btn-primary mt-4">再読み込み</button></div> : hasMissing ? <Empty title="対象が見つかりません" description="URLが変更されたか、マシンが削除された可能性があります。"/> : isMachinePage ? <div className="space-y-4">
-        {machine.videoId && <section className="video-container"><div className="video-bar"><span className="flex items-center gap-2"><span className="live-marker"/> HOW TO USE</span><span>01 / 06</span></div><video className="w-full aspect-video bg-black" src={`/api/video/${machine.videoId}`} controls playsInline preload="metadata"/></section>}
-        <div className="machine-summary"><span className="machine-summary-badge"><Dumbbell size={15}/> MACHINE GUIDE</span><h2 className="text-2xl font-bold tracking-tight mt-3">{machine.name}</h2><p className="text-sm text-neutral-200 mt-1">正しい使用方法と安全上の注意をご確認ください。</p></div>
-        <div className="space-y-3">{CONTENT_FIELDS.map(([key, title, desc, Icon], i) => <ViewerSection key={key} index={i + (machine.videoId ? 2 : 1)} title={title} description={desc} Icon={Icon} textValue={machine[key]}/>)}</div>
-        <button className="btn btn-secondary w-full" onClick={backAction}><ArrowLeft size={17}/> マシン一覧に戻る</button>
-      </div> : list.length ? <div className="space-y-3 mt-6">
+      {loading ? <Skeleton/> : error ? <div className="mt-6"><Alert>{error}</Alert><button onClick={refresh} className="btn btn-primary mt-4">再読み込み</button></div> : hasMissing ? <Empty title="対象が見つかりません" description="URLが変更されたか、マシンが削除された可能性があります。"/> : list.length ? <div className="space-y-3 mt-6">
         <div className="list-caption"><span>{isAreaPage ? 'MACHINES' : isStorePage ? 'AREAS' : 'LOCATIONS'}</span><span>{list.length} ITEMS</span></div>
         {list.map((item, i) => <button className="selection-card group" key={item.id} onClick={() => navigate(`/${isAreaPage ? 'machine' : isStorePage ? 'area' : 'store'}/${item.id}`)}><span className="selection-index">{num(i)}</span><div className="selection-icon">{isAreaPage ? <Dumbbell size={24}/> : isStorePage ? <Layers3 size={24}/> : <MapPin size={24}/>}</div><div className="flex-1 text-left min-w-0"><div className="font-semibold text-white text-[17px] truncate">{item.name}</div><div className="text-xs text-neutral-300 mt-1">{isAreaPage ? '使い方を見る' : isStorePage ? 'マシン一覧を見る' : 'エリア一覧を見る'}</div></div><ChevronRight className="text-white shrink-0 group-hover:translate-x-1 transition-transform" size={22}/></button>)}
       </div> : <Empty title={isAreaPage ? 'マシンが登録されていません' : isStorePage ? 'エリアが登録されていません' : '店舗が登録されていません'} description="店舗スタッフによる登録をお待ちください。"/>}
