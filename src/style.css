@@ -874,58 +874,125 @@ button, a { touch-action: manipulation; }
   .manual-guide-tips { padding: 18px 15px 20px; }
 }
 
-/* Shared outline-only exercise and tips panel */
-/* A single neutral outline surrounds both sections, with no colored panel fills. */
-.manual-guide-combined {
-  border: 1.5px solid rgba(255, 255, 255, .54);
-  border-radius: 20px;
-  background: transparent;
+/* Actual unified panel for the manual. These inner parts never receive card classes. */
+.manual-exercise-panel {
+  width: 100%;
+  background: #000;
+  border: 1.5px solid rgba(255,255,255,.68);
+  border-radius: 18px;
   overflow: hidden;
-}
-.manual-guide-combined .manual-guide-instructions,
-.manual-guide-combined .manual-guide-tips {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
   box-shadow: none;
 }
-.manual-guide-combined .manual-guide-instructions {
-  padding: 23px 20px 25px;
+.manual-exercise-panel .manual-exercise-part {
+  display: block;
+  margin: 0;
+  padding: 24px 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #fff;
 }
-.manual-guide-combined .manual-guide-tips {
-  margin: 0 20px;
-  padding: 23px 0 25px;
-  border-top: 1px solid rgba(255, 255, 255, .30);
+.manual-exercise-panel .manual-exercise-part-tips {
+  border-top: 1px solid rgba(255,255,255,.35);
 }
-.manual-guide-combined .manual-guide-instructions .manual-guide-icon,
-.manual-guide-combined .manual-guide-tips .manual-guide-icon {
+.manual-exercise-panel .manual-guide-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.manual-exercise-panel .manual-guide-icon {
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
 }
-.manual-guide-combined .manual-guide-instructions .manual-guide-icon {
-  border-color: #55db93;
-  color: #86eeb3;
+.manual-exercise-panel .manual-exercise-part-instructions .manual-guide-icon {
+  color: #85e7ad;
+  border: 1px solid #57c48a;
 }
-.manual-guide-combined .manual-guide-tips .manual-guide-icon {
-  border-color: #edc44d;
-  color: #ffdb72;
+.manual-exercise-panel .manual-exercise-part-tips .manual-guide-icon {
+  color: #f8d66c;
+  border: 1px solid #d2ae3e;
 }
-.manual-guide-combined .manual-guide-instructions .manual-step-number {
+.manual-exercise-panel .manual-guide-title {
+  font-weight: 850;
+  line-height: 1.35;
+}
+.manual-exercise-panel .manual-exercise-part-instructions .manual-guide-title {
+  color: #bcf5d2;
+  font-size: clamp(21px,5.8vw,25px);
+}
+.manual-exercise-panel .manual-exercise-part-tips .manual-guide-title {
+  color: #ffeba7;
+  font-size: clamp(18px,5vw,21px);
+}
+.manual-exercise-panel .manual-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.manual-exercise-panel .manual-steps li {
+  display: grid;
+  grid-template-columns: 36px minmax(0,1fr);
+  gap: 12px;
+  padding: 0 0 17px;
+  align-items: start;
+  color: #f5f5f5;
+  font-size: clamp(16px,4.5vw,19px);
+  line-height: 1.75;
+}
+.manual-exercise-panel .manual-steps li + li,
+.manual-exercise-panel .manual-bullets li + li {
+  padding-top: 16px;
+  border-top: 1px solid rgba(255,255,255,.16);
+}
+.manual-exercise-panel .manual-steps li:last-child,
+.manual-exercise-panel .manual-bullets li:last-child {
+  padding-bottom: 0;
+}
+.manual-exercise-panel .manual-step-number {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 35px;
+  height: 35px;
+  margin-top: 1px;
+  border: 1.5px solid #77dba1;
+  border-radius: 50%;
   background: transparent;
-  border: 1.5px solid #81e9ab;
-  color: #81e9ab;
+  color: #94efb8;
+  font-size: 17px;
+  font-weight: 850;
 }
-.manual-guide-combined .manual-guide-instructions .manual-steps li + li {
-  border-color: rgba(255, 255, 255, .16);
+.manual-exercise-panel .manual-bullets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
-.manual-guide-combined .manual-guide-tips .manual-bullets li + li {
-  border-color: rgba(255, 255, 255, .16);
+.manual-exercise-panel .manual-bullets li {
+  display: grid;
+  grid-template-columns: 1.2em minmax(0,1fr);
+  align-items: start;
+  gap: 4px;
+  color: #f5f5f5;
+  font-size: 15px;
+  line-height: 1.85;
+  padding: 0 0 15px;
+}
+.manual-exercise-panel .manual-bullet-symbol {
+  color: #f5d56b;
+}
+.manual-exercise-panel .manual-guide-empty {
+  color: #b8b8b8;
 }
 @media (max-width: 360px) {
-  .manual-guide-combined .manual-guide-instructions {
-    padding: 20px 15px 23px;
-  }
-  .manual-guide-combined .manual-guide-tips {
-    margin: 0 15px;
-    padding: 21px 0 23px;
-  }
+  .manual-exercise-panel .manual-exercise-part { padding: 20px 15px; }
+  .manual-exercise-panel .manual-steps li { grid-template-columns: 32px minmax(0,1fr); gap: 10px; }
+  .manual-exercise-panel .manual-step-number { width: 31px; height: 31px; font-size: 15px; }
 }
