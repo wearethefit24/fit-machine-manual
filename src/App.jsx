@@ -352,6 +352,14 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
             </div>}
             <div className="manual-guide-sections">
               {GUIDE_SECTIONS.map(({ field, title, kind, Icon }) =>
+                field === 'tips' ? null :
+                field === 'instructions' ? <div className="manual-guide-combined" role="group"
+                  aria-label="実施手順とポイント" key="instructions-and-tips">
+                  <ManualGuideSection field={field} title={title} kind={kind}
+                    Icon={Icon} value={machine[field]}/>
+                  <ManualGuideSection field="tips" title="ポイント" kind="bullets"
+                    Icon={Sparkles} value={machine.tips}/>
+                </div> :
                 <ManualGuideSection key={field} field={field} title={title}
                   kind={kind} Icon={Icon} value={machine[field]}/>)}
             </div>
