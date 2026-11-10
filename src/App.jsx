@@ -260,6 +260,49 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
       {scanControls}
     </div>;
   }
+  // After choosing a store, show areas using the same large white vertical buttons as the home screen.
+  if (isStorePage) {
+    return <div className="min-h-screen">
+      <main className="viewer-home viewer-category-home">
+        <div className="viewer-selection-back"><Back onClick={backAction}/></div>
+        <h1 className="viewer-home-title">エリアを選択してください</h1>
+        {loading ? <div className="viewer-home-buttons"><Skeleton/></div>
+          : error ? <div className="viewer-home-buttons"><Alert>{error}</Alert><button type="button" className="btn btn-primary mt-4" onClick={refresh}>再読み込み</button></div>
+          : hasMissing ? <div className="viewer-home-buttons"><Empty title="店舗が見つかりません" description="店舗選択画面から選び直してください。"/></div>
+          : list.length ? <div className="viewer-home-buttons">
+              {list.map(item => <button type="button" key={item.id}
+                onClick={() => navigate('/area/' + item.id)}
+                className="viewer-store-button">{item.name}</button>)}
+            </div>
+          : <div className="viewer-home-buttons"><Empty title="エリアが登録されていません" description="店舗スタッフによる登録をお待ちください。"/></div>}
+      </main>
+      {scanControls}
+    </div>;
+  }
+
+  // Machine choices follow the photo-grid layout; until photos are supported, display white square tiles.
+  if (isAreaPage) {
+    return <div className="min-h-screen">
+      <main className="viewer-machine-picker">
+        <div className="viewer-selection-back"><Back onClick={backAction}/></div>
+        <h1 className="viewer-machine-picker-title">マシンを選択してください</h1>
+        {loading ? <Skeleton/>
+          : error ? <div><Alert>{error}</Alert><button type="button" className="btn btn-primary mt-4" onClick={refresh}>再読み込み</button></div>
+          : hasMissing ? <Empty title="エリアが見つかりません" description="エリア選択画面から選び直してください。"/>
+          : list.length ? <div className="viewer-machine-grid">
+              {list.map(item => <button type="button" className="viewer-machine-tile" key={item.id}
+                onClick={() => navigate('/machine/' + item.id)}
+                aria-label={item.name + 'の取扱説明書を開く'}>
+                <span className="viewer-machine-placeholder" aria-hidden="true"/>
+                <span className="viewer-machine-name">{item.name}</span>
+              </button>)}
+            </div>
+          : <Empty title="マシンが登録されていません" description="店舗スタッフによる登録をお待ちください。"/>}
+      </main>
+      {scanControls}
+    </div>;
+  }
+
   return <div className="min-h-screen">
     <main className={isMachinePage ? 'shell pb-24' : 'shell pb-48'}>
       <div className="hero"><div className="mb-4">{(isMachinePage || isAreaPage || isStorePage) && <Back onClick={backAction}/>}</div>
