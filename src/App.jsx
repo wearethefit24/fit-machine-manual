@@ -222,7 +222,7 @@ function ManualGuideSection({ field, title, kind, Icon, value }) {
   const text = typeof value === 'string' ? value.trim() : '';
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const stripPrefix = line => line.replace(/^(?:[0-9]{1,2}[.．、)]|[①-⑳]|[・●•\-])\s*/, '').trim();
-  return <section className={'manual-guide-section' + (field === 'overview' ? ' manual-guide-overview' : '') + (field === 'instructions' ? ' manual-guide-instructions' : '') + (kind === 'warning' ? ' manual-guide-warning' : '')}
+  return <section className={'manual-guide-section' + (field === 'overview' ? ' manual-guide-overview' : '') + (field === 'adjustment' ? ' manual-guide-adjustment' : '') + (field === 'instructions' ? ' manual-guide-instructions' : '') + (field === 'tips' ? ' manual-guide-tips' : '') + (kind === 'warning' ? ' manual-guide-warning' : '')}
     aria-labelledby={'manual-' + field}>
     <div className="manual-guide-heading">
       <span className="manual-guide-icon" aria-hidden="true"><Icon size={21} strokeWidth={2}/></span>
