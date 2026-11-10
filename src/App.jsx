@@ -3,7 +3,7 @@ import {
   Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, CheckCircle2, ChevronRight,
   ClipboardList, Download, Dumbbell, Edit3, ExternalLink, Film, FolderOpen, Info,
   Layers3, Link2, LoaderCircle, LockKeyhole, LogOut, MapPin, Menu, Plus, QrCode, ScanQrCode,
-  Save, Settings2, Share2, ShieldAlert, Smartphone, Sparkles, Trash2, UploadCloud,
+  Save, Settings2, Share2, ShieldAlert, Smartphone, Sparkles, TriangleAlert, Trash2, UploadCloud,
   Video, X
 } from 'lucide-react';
 import QRCode from 'qrcode';
@@ -14,7 +14,7 @@ const CONTENT_FIELDS = [
   ['adjustment', '調整方法', 'シートの高さやパッドの位置などを調整してください。', Settings2],
   ['instructions', '操作手順', '開始姿勢から動作の流れを順番にご案内します。', ClipboardList],
   ['tips', 'ポイント', 'フォームや呼吸のコツを確認しましょう。', Sparkles],
-  ['safety', '安全上の注意事項', '無理のない重量を設定し、周囲の安全を確認してください。', ShieldAlert],
+  ['safety', '安全上の注意事項', '無理のない重量を設定し、周囲の安全を確認してください。', TriangleAlert],
 ];
 
 async function api(path, options = {}) {
@@ -215,7 +215,7 @@ const GUIDE_SECTIONS = [
   { field: 'adjustment', title: 'マシン調整方法', kind: 'steps', Icon: Settings2 },
   { field: 'instructions', title: '実施手順', kind: 'steps', Icon: ClipboardList },
   { field: 'tips', title: 'ポイント', kind: 'bullets', Icon: Sparkles },
-  { field: 'safety', title: '安全上の注意事項', kind: 'warning', Icon: ShieldAlert },
+  { field: 'safety', title: '安全上の注意事項', kind: 'warning', Icon: TriangleAlert },
 ];
 
 function ManualGuideSection({ field, title, kind, Icon, value, joined = false }) {
