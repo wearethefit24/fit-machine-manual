@@ -87,6 +87,27 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
     else if (isAreaPage && currentStore) navigate(`/store/${currentStore.id}`);
     else navigate('/');
   };
+  // The viewer home is a dedicated, vertically centered store selection screen.
+  // Machine QR deep links and all other screens keep their existing layouts.
+  if (ids.length === 0) {
+    return <main className="min-h-[100svh] bg-black flex flex-col items-center justify-center px-4 py-10">
+      <div className="w-full max-w-[230px] flex flex-col items-center gap-4">
+        <h1 className="text-white text-sm font-medium text-center">店舗を選択してください</h1>
+        {loading ? <div className="w-full"><Skeleton/></div>
+          : error ? <div className="w-full"><Alert>{error}</Alert><button type="button" onClick={refresh} className="btn btn-primary w-full mt-4">再読み込み</button></div>
+          : catalog.stores.length ? <div className="w-full flex flex-col gap-3">
+              {catalog.stores.map(item => <button
+                type="button"
+                key={item.id}
+                onClick={() => navigate(`/store/${item.id}`)}
+                className="w-full min-h-[90px] px-2 py-3 bg-black text-white border border-white rounded-xl flex items-center justify-center text-center font-bold leading-tight break-words transition-colors hover:bg-neutral-900 active:bg-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                style={{fontSize: item.name.length > 5 ? '26px' : item.name.length > 4 ? '32px' : '40px'}}
+              >{item.name}</button>)}
+            </div>
+          : <div className="w-full"><Empty title="店舗が登録されていません" description="店舗スタッフによる登録をお待ちください。"/></div>}
+      </div>
+    </main>;
+  }
   return <div className="min-h-screen">
     <main className="shell pb-24">
       <div className="hero"><div className="mb-4">{(isMachinePage || isAreaPage || isStorePage) && <Back onClick={backAction}/>}</div>
