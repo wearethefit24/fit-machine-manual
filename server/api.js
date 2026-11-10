@@ -302,9 +302,15 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
     if (method === 'PATCH') {
       const d = await body(req); if (!validName(d.name) || !validId(d.areaId)) return fail('エリアとマシン名を指定してください。');
       const area = await db.prepare('SELECT id FROM areas WHERE id=?').bind(d.areaId).first(); if (!area) return fail('エリアがありません。', 404);
+      const previous = await db.prepare('SELECT id,adjustment,instructions FROM machines WHERE id=?').bind(id).first();
+      if (!previous) return fail('マシンがありません。', 404);
       const v = fields(d); const r = await db.prepare(`UPDATE machines SET area_id=?,name=?,overview=?,adjustment=?,instructions=?,tips=?,safety=?,updated_at=datetime('now') WHERE id=?`)
         .bind(d.areaId, d.name.trim(), v.overview, v.adjustment, v.instructions, v.tips, v.safety, id).run();
-      return r.meta.changes ? json({ ok: true }) : fail('マシンがありません。', 404);
+      if (!r.meta.changes) return fail('マシンがありません。', 404);
+      const retained = new Set([...manualImageIds(v.adjustment), ...manualImageIds(v.instructions)]);
+      const removed = imageJobs(previous).filter(job => !retained.has(job.id.slice(job.id.lastIndexOf(':') + 1)));
+      if (removed.length) { await enqueueCleanup(db, removed); waitUntil(drainCleanup(env)); }
+      return json({ ok: true });
     }
     if (method === 'DELETE') {
       const old = await deletingVideos(db, 'machine', id);
