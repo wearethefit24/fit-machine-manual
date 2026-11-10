@@ -4,6 +4,8 @@ const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
 const SESSION_SECONDS = 12 * 60 * 60;
 const LOGO_KEY = 'site:logo';
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+const MAX_MANUAL_IMAGE_BYTES = 2 * 1024 * 1024;
+const MANUAL_IMAGE_PREFIX = '@FIT_IMG_V1:';
 
 // Only raster images are accepted, checked against actual bytes (not an untrusted MIME header).
 export function logoMime(bytes) {
@@ -26,11 +28,30 @@ function json(value, status = 200, headers = {}) {
 function fail(message, status = 400) { return json({ error: message }, status); }
 function validName(s, max = 80) { return typeof s === 'string' && s.trim().length > 0 && s.trim().length <= max; }
 function validId(s) { return typeof s === 'string' && /^[0-9a-f-]{36}$/i.test(s); }
+// Cropped image UUIDs are encoded in existing text columns, so no D1 migration is needed.
+export function manualImageIds(value) {
+  if (typeof value !== 'string' || !value.startsWith(MANUAL_IMAGE_PREFIX)) return [];
+  let items;
+  try { items = JSON.parse(value.slice(MANUAL_IMAGE_PREFIX.length)); }
+  catch { throw new Error('手順画像のデータ形式が正しくありません。'); }
+  if (!Array.isArray(items) || items.length > 50 || items.some(item =>
+    !item || typeof item.text !== 'string' || item.text.length > 15000 ||
+    (item.imageId != null && !validId(item.imageId))
+  )) throw new Error('手順画像のデータ形式が正しくありません。');
+  return items.filter(item => item.imageId).map(item => item.imageId);
+}
+function imagesFromMachine(machine) {
+  return [...new Set([...manualImageIds(machine.adjustment), ...manualImageIds(machine.instructions)])];
+}
+function imageJobs(machine) {
+  return imagesFromMachine(machine).map(imageId => ({ id: 'image:' + machine.id + ':' + imageId, chunk_count: 1 }));
+}
 function fields(obj) {
   const out = {};
   for (const key of ['overview', 'adjustment', 'instructions', 'tips', 'safety']) {
     const val = obj[key] ?? '';
     if (typeof val !== 'string' || val.length > 15000) throw new Error(`${key}は15,000文字以内で入力してください。`);
+    if (key === 'adjustment' || key === 'instructions') manualImageIds(val);
     out[key] = val;
   }
   return out;
@@ -124,7 +145,12 @@ async function drainCleanup(env) {
       continue;
     }
     // One chunk delete = one KV subrequest; stay under Workers Free's 50/request limit.
-    for (let n = job.next_index; n < job.next_index + count; n++) await env.VIDEO_KV.delete(`video:${job.video_id}:${n}`);
+    for (let n = job.next_index; n < job.next_index + count; n++) {
+      const key = job.video_id.startsWith('image:')
+        ? 'manual:' + job.video_id.slice(6)
+        : `video:${job.video_id}:${n}`;
+      await env.VIDEO_KV.delete(key);
+    }
     const next = job.next_index + count;
     if (next >= job.chunk_count) await env.DB.prepare('DELETE FROM video_cleanup_jobs WHERE video_id=?').bind(job.video_id).run();
     else await env.DB.prepare('UPDATE video_cleanup_jobs SET next_index=MAX(next_index,?) WHERE video_id=?').bind(next, job.video_id).run();
@@ -139,6 +165,28 @@ async function deletingVideos(db, scope, id) {
   else if (scope === 'area') sql = 'SELECT v.id,v.chunk_count FROM videos v JOIN machines m ON v.machine_id=m.id WHERE m.area_id=?';
   else sql = 'SELECT id,chunk_count FROM videos WHERE machine_id=?';
   return (await db.prepare(sql).bind(id).all()).results;
+}
+async function deletingImages(db, scope, id) {
+  let sql;
+  if (scope === 'store') sql = 'SELECT m.id,m.adjustment,m.instructions FROM machines m JOIN areas a ON m.area_id=a.id WHERE a.store_id=?';
+  else if (scope === 'area') sql = 'SELECT id,adjustment,instructions FROM machines WHERE area_id=?';
+  else sql = 'SELECT id,adjustment,instructions FROM machines WHERE id=?';
+  const rows = (await db.prepare(sql).bind(id).all()).results;
+  return rows.flatMap(imageJobs);
+}
+async function serveManualImage(req, env, machineId, imageId) {
+  if (!validId(machineId) || !validId(imageId)) return fail('画像がありません。', 404);
+  const machine = await env.DB.prepare('SELECT adjustment,instructions FROM machines WHERE id=?').bind(machineId).first();
+  if (!machine || !imagesFromMachine(machine).includes(imageId)) return fail('画像がありません。', 404);
+  const data = await env.VIDEO_KV.get(`manual:${machineId}:${imageId}`, 'arrayBuffer');
+  if (!data) return fail('画像がありません。', 404);
+  return new Response(req.method === 'HEAD' ? null : data, {
+    status: 200, headers: {
+      'content-type': 'image/jpeg',
+      'cache-control': 'no-store, max-age=0',
+      'x-content-type-options': 'nosniff'
+    }
+  });
 }
 async function adminRequest({ request: req, env, waitUntil }, parts) {
   const method = req.method;
@@ -181,8 +229,9 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
     }
     if (method === 'DELETE') {
       const old = await deletingVideos(db, 'store', id);
+      const oldImages = await deletingImages(db, 'store', id);
       const r = await db.prepare('DELETE FROM stores WHERE id=?').bind(id).run();
-      if (r.meta.changes) { await enqueueCleanup(db, old); waitUntil(drainCleanup(env)); }
+      if (r.meta.changes) { await enqueueCleanup(db, [...old, ...oldImages]); waitUntil(drainCleanup(env)); }
       return r.meta.changes ? json({ ok: true }) : fail('店舗がありません。', 404);
     }
   }
@@ -213,8 +262,9 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
     }
     if (method === 'DELETE') {
       const old = await deletingVideos(db, 'area', id);
+      const oldImages = await deletingImages(db, 'area', id);
       const r = await db.prepare('DELETE FROM areas WHERE id=?').bind(id).run();
-      if (r.meta.changes) { await enqueueCleanup(db, old); waitUntil(drainCleanup(env)); }
+      if (r.meta.changes) { await enqueueCleanup(db, [...old, ...oldImages]); waitUntil(drainCleanup(env)); }
       return r.meta.changes ? json({ ok: true }) : fail('エリアがありません。', 404);
     }
   }
@@ -230,6 +280,16 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
       return json({ ok: true, id: newId }, 201);
     }
     if (!validId(id)) return fail('マシンIDが不正です。');
+    if (action === 'images' && validId(index) && method === 'PUT') {
+      const machine = await db.prepare('SELECT id FROM machines WHERE id=?').bind(id).first();
+      if (!machine) return fail('マシンがありません。', 404);
+      if (Number(req.headers.get('content-length') || 0) > MAX_MANUAL_IMAGE_BYTES) return fail('画像は2MiB以内にしてください。', 413);
+      const data = await req.arrayBuffer();
+      if (!data.byteLength || data.byteLength > MAX_MANUAL_IMAGE_BYTES) return fail('画像は2MiB以内にしてください。', 413);
+      if (logoMime(data) !== 'image/jpeg') return fail('切り取り済みのJPEG画像を選択してください。');
+      await env.VIDEO_KV.put(`manual:${id}:${index}`, data);
+      return json({ ok: true, imageId: index });
+    }
     if (action === 'video' && index === 'init' && method === 'POST') {
       const d = await body(req);
       if (typeof d.filename !== 'string' || !d.filename.trim() || d.filename.length > 180 || !['video/mp4', 'video/webm', 'video/quicktime'].includes(d.mimeType) || !Number.isInteger(d.size) || d.size <= 0 || d.size > MAX_VIDEO_BYTES) return fail('MP4・WebM・MOVの動画（80MiB以内）を選択してください。');
@@ -248,8 +308,9 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
     }
     if (method === 'DELETE') {
       const old = await deletingVideos(db, 'machine', id);
+      const oldImages = await deletingImages(db, 'machine', id);
       const r = await db.prepare('DELETE FROM machines WHERE id=?').bind(id).run();
-      if (r.meta.changes) { await enqueueCleanup(db, old); waitUntil(drainCleanup(env)); }
+      if (r.meta.changes) { await enqueueCleanup(db, [...old, ...oldImages]); waitUntil(drainCleanup(env)); }
       return r.meta.changes ? json({ ok: true }) : fail('マシンがありません。', 404);
     }
   }
@@ -355,6 +416,8 @@ export async function handleApi(context) {
     if (req.method === 'GET' && path.length === 2 && path[1] === 'catalog') return json(await catalog(env.DB));
     if ((req.method === 'GET' || req.method === 'HEAD') && path.length === 2 && path[1] === 'logo') return serveLogo(req, env);
     if ((req.method === 'GET' || req.method === 'HEAD') && path[1] === 'video' && path.length === 3) return serveVideo(req, env, path[2]);
+    if ((req.method === 'GET' || req.method === 'HEAD') && path[1] === 'manual-image' && path.length === 4)
+      return serveManualImage(req, env, path[2], path[3]);
     if (path[1] === 'admin') {
       if (!['GET', 'POST', 'PATCH', 'DELETE', 'PUT'].includes(req.method)) return fail('メソッドが許可されていません。', 405);
       if (!['GET', 'HEAD'].includes(req.method)) {
@@ -366,7 +429,7 @@ export async function handleApi(context) {
     return fail('APIがありません。', 404);
   } catch (err) {
     if (err instanceof SyntaxError) return fail('JSONの形式が正しくありません。');
-    if (err?.message && (/15,000|JSON形式|入力内容/.test(err.message))) return fail(err.message);
+    if (err?.message && (/15,000|JSON形式|入力内容|手順画像/.test(err.message))) return fail(err.message);
     console.error('API failure', err?.message);
     return fail('サーバーでエラーが発生しました。', 500);
   }
