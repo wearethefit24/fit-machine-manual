@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, CheckCircle2, ChevronRight,
-  ClipboardList, Download, Dumbbell, Edit3, ExternalLink, Film, FolderOpen, Info,
+  ClipboardList, Download, Dumbbell, Edit3, ExternalLink, Film, FolderOpen, ImagePlus, Info,
   Layers3, Link2, LoaderCircle, LockKeyhole, LogOut, MapPin, Menu, Plus, QrCode, ScanQrCode,
   Save, Settings2, Share2, ShieldAlert, Smartphone, Sparkles, TriangleAlert, Trash2, UploadCloud,
-  Video, X
+  Video, X, ZoomIn
 } from 'lucide-react';
 import QRCode from 'qrcode';
 
@@ -479,46 +479,176 @@ function AreasAdmin({ catalog, refresh, notify, tidy }) {
 }
 const initialFields = { overview: '', adjustment: '', instructions: '', tips: '', safety: '' };
 
-function ManualItemsEditor({ title, field, value, onChange }) {
-  const items = (value || '').split(/\r?\n/).map(line =>
-    line.replace(/^\s*(?:[①-⑳]|[・●•]|\d{1,2}[.．、)](?=\s))\s*/, '')
-  );
+
+function ManualImageCropper({ file, onApply, onCancel }) {
+  const WIDTH = 1200, HEIGHT = 900;
+  const canvasRef = useRef(null);
+  const imageRef = useRef(null);
+  const dragRef = useRef(null);
+  const [ready, setReady] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  function constrain(point, nextZoom) {
+    const image = imageRef.current;
+    if (!image) return point;
+    const base = Math.max(WIDTH / image.naturalWidth, HEIGHT / image.naturalHeight) * nextZoom;
+    const maxX = Math.max(0, (image.naturalWidth * base - WIDTH) / 2);
+    const maxY = Math.max(0, (image.naturalHeight * base - HEIGHT) / 2);
+    return {
+      x: Math.max(-maxX, Math.min(maxX, point.x)),
+      y: Math.max(-maxY, Math.min(maxY, point.y))
+    };
+  }
+  useEffect(() => {
+    let alive = true;
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      if (!alive) return;
+      imageRef.current = image;
+      setZoom(1);
+      setOffset({ x: 0, y: 0 });
+      setReady(true);
+    };
+    image.onerror = () => { if (alive) setError('この写真を読み込めません。JPEG・PNG・WebP画像をお試しください。'); };
+    image.src = url;
+    return () => { alive = false; URL.revokeObjectURL(url); };
+  }, [file]);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const image = imageRef.current;
+    if (!ready || !canvas || !image) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const base = Math.max(WIDTH / image.naturalWidth, HEIGHT / image.naturalHeight) * zoom;
+    const w = image.naturalWidth * base;
+    const h = image.naturalHeight * base;
+    ctx.fillStyle = '#111111';
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    ctx.drawImage(image, (WIDTH - w) / 2 + offset.x, (HEIGHT - h) / 2 + offset.y, w, h);
+  }, [ready, zoom, offset]);
+  function pointerDown(e) {
+    if (!ready) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  }
+  function pointerMove(e) {
+    if (!dragRef.current || dragRef.current.id !== e.pointerId) return;
+    const dx = e.clientX - dragRef.current.x, dy = e.clientY - dragRef.current.y;
+    dragRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    const ratio = WIDTH / Math.max(1, canvasRef.current?.getBoundingClientRect().width || WIDTH);
+    setOffset(prev => constrain({ x: prev.x + dx * ratio, y: prev.y + dy * ratio }, zoom));
+  }
+  async function confirm() {
+    if (!ready || saving) return;
+    setSaving(true);
+    const blob = await new Promise(resolve => canvasRef.current?.toBlob(resolve, 'image/jpeg', .82));
+    if (!blob) { setError('画像を切り取れませんでした。'); setSaving(false); return; }
+    if (blob.size > 2 * 1024 * 1024) { setError('画像の容量が2MiBを超えました。'); setSaving(false); return; }
+    onApply(blob);
+  }
+  return <div className="manual-crop-backdrop">
+    <div className="manual-crop-dialog" role="dialog" aria-modal="true" aria-label="画像を4対3に切り取る">
+      <div className="manual-crop-header">
+        <h3>画像を4:3に切り取り</h3>
+        <button type="button" className="manual-crop-close" onClick={onCancel} aria-label="切り取りをキャンセル"><X size={22}/></button>
+      </div>
+      <p className="manual-crop-help">写真を指で動かして位置を調整できます。スライダーで拡大できます。</p>
+      <div className="manual-crop-canvas-wrap">
+        <canvas ref={canvasRef} width={WIDTH} height={HEIGHT}
+          className="manual-crop-canvas"
+          onPointerDown={pointerDown} onPointerMove={pointerMove}
+          onPointerUp={() => { dragRef.current = null; }}
+          onPointerCancel={() => { dragRef.current = null; }}/>
+        {!ready && !error && <span className="manual-crop-loading">画像を読み込んでいます…</span>}
+      </div>
+      <label className="manual-crop-zoom"><ZoomIn size={18}/> 拡大
+        <input type="range" min="1" max="3" step=".05" value={zoom} disabled={!ready}
+          onChange={e => {
+            const next = Number(e.target.value);
+            setOffset(prev => constrain(prev, next));
+            setZoom(next);
+          }}/>
+      </label>
+      {error && <p className="manual-crop-error" role="alert">{error}</p>}
+      <div className="manual-crop-actions">
+        <button type="button" className="btn btn-secondary" onClick={onCancel}>キャンセル</button>
+        <button type="button" className="btn btn-primary" disabled={!ready || saving} onClick={confirm}>
+          {saving ? '処理中…' : 'この範囲で決定'}
+        </button>
+      </div>
+    </div>
+  </div>;
+}
+
+function ManualItemsEditor({ title, field, value, onChange, onCrop, imagePreviews = {}, machineId }) {
+  const items = readManualItems(value).map(item => ({
+    ...item,
+    text: item.text.replace(/^\s*(?:[①-⑳]|[・●•]|\d{1,2}[.．、)](?=\s))\s*/, '')
+  }));
   const numbered = field === 'adjustment' || field === 'instructions';
   const marker = index => numbered
     ? index < 20 ? String.fromCodePoint(0x2460 + index) : String(index + 1) + '.'
     : '・';
   function update(index, text) {
     const next = items.slice();
-    // Each row represents one item; pasted line breaks must not create unnumbered rows.
-    next[index] = text.replace(/\r?\n/g, ' ');
-    onChange(next.join('\n'));
+    next[index] = { ...next[index], text: text.replace(/\r?\n/g, ' ') };
+    onChange(writeManualItems(next));
   }
   function remove(index) {
     const next = items.filter((_, i) => i !== index);
-    onChange((next.length ? next : ['']).join('\n'));
+    onChange(writeManualItems(next.length ? next : [{ text: '', imageId: null }]));
+  }
+  function changeImage(index, imageId) {
+    const next = items.slice();
+    next[index] = { ...next[index], imageId };
+    onChange(writeManualItems(next));
   }
   return <div className="manual-items-editor">
     <div className="field-label">{title}</div>
     <div className="manual-items-rows">
-      {items.map((item, index) => <div className="manual-item-row" key={index}>
-        <span className="manual-item-marker" aria-hidden="true">{marker(index)}</span>
-        <textarea
-          rows={2}
-          className="field manual-item-input"
-          aria-label={title + ' ' + marker(index)}
-          placeholder={title + 'を入力'}
-          value={item}
-          maxLength={15000}
-          onChange={event => update(index, event.target.value)}
-        />
-        <button type="button" className="icon-button manual-item-remove"
-          aria-label={title + 'の' + marker(index) + 'を削除'}
-          title="この項目を削除" disabled={items.length === 1}
-          onClick={() => remove(index)}><X size={17}/></button>
-      </div>)}
+      {items.map((item, index) => {
+        const imageSrc = item.imageId && (imagePreviews[item.imageId]?.url ||
+          (machineId ? '/api/manual-image/' + machineId + '/' + item.imageId : null));
+        return <div className="manual-item-row" key={index}>
+          <span className="manual-item-marker" aria-hidden="true">{marker(index)}</span>
+          <div className="manual-item-body">
+            <textarea rows={2} className="field manual-item-input"
+              aria-label={title + ' ' + marker(index)}
+              placeholder={title + 'を入力'}
+              value={item.text}
+              maxLength={15000}
+              onChange={event => update(index, event.target.value)}/>
+            {numbered && <div className="manual-item-photo-controls">
+              {imageSrc && <img className="manual-item-photo-preview" src={imageSrc}
+                alt={title + ' ' + marker(index) + ' に添付した画像'}/>}
+              <div className="manual-item-photo-buttons">
+                <label className="manual-image-pick">
+                  <ImagePlus size={16}/>{item.imageId ? '画像を変更' : '画像を追加（4:3）'}
+                  <input type="file" accept="image/*" className="sr-only"
+                    onChange={e => {
+                      const chosen = e.target.files?.[0];
+                      if (chosen) onCrop(field, index, chosen);
+                      e.target.value = '';
+                    }}/>
+                </label>
+                {item.imageId && <button type="button" className="manual-image-remove"
+                  onClick={() => changeImage(index, null)}>画像を外す</button>}
+              </div>
+            </div>}
+          </div>
+          <button type="button" className="icon-button manual-item-remove"
+            aria-label={title + 'の' + marker(index) + 'を削除'}
+            title="この項目を削除" disabled={items.length === 1}
+            onClick={() => remove(index)}><X size={17}/></button>
+        </div>;
+      })}
     </div>
     <button type="button" className="btn btn-secondary manual-item-add"
-      onClick={() => onChange([...items, ''].join('\n'))}>
+      onClick={() => onChange(writeManualItems([...items, { text: '', imageId: null }]))}>
       <Plus size={18}/>追加
     </button>
   </div>;
