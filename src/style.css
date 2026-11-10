@@ -873,3 +873,59 @@ button, a { touch-action: manipulation; }
   .manual-guide-adjustment { padding: 13px 14px 15px; }
   .manual-guide-tips { padding: 18px 15px 20px; }
 }
+
+/* Shared outline-only exercise and tips panel */
+/* A single neutral outline surrounds both sections, with no colored panel fills. */
+.manual-guide-combined {
+  border: 1.5px solid rgba(255, 255, 255, .54);
+  border-radius: 20px;
+  background: transparent;
+  overflow: hidden;
+}
+.manual-guide-combined .manual-guide-instructions,
+.manual-guide-combined .manual-guide-tips {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.manual-guide-combined .manual-guide-instructions {
+  padding: 23px 20px 25px;
+}
+.manual-guide-combined .manual-guide-tips {
+  margin: 0 20px;
+  padding: 23px 0 25px;
+  border-top: 1px solid rgba(255, 255, 255, .30);
+}
+.manual-guide-combined .manual-guide-instructions .manual-guide-icon,
+.manual-guide-combined .manual-guide-tips .manual-guide-icon {
+  background: transparent;
+}
+.manual-guide-combined .manual-guide-instructions .manual-guide-icon {
+  border-color: #55db93;
+  color: #86eeb3;
+}
+.manual-guide-combined .manual-guide-tips .manual-guide-icon {
+  border-color: #edc44d;
+  color: #ffdb72;
+}
+.manual-guide-combined .manual-guide-instructions .manual-step-number {
+  background: transparent;
+  border: 1.5px solid #81e9ab;
+  color: #81e9ab;
+}
+.manual-guide-combined .manual-guide-instructions .manual-steps li + li {
+  border-color: rgba(255, 255, 255, .16);
+}
+.manual-guide-combined .manual-guide-tips .manual-bullets li + li {
+  border-color: rgba(255, 255, 255, .16);
+}
+@media (max-width: 360px) {
+  .manual-guide-combined .manual-guide-instructions {
+    padding: 20px 15px 23px;
+  }
+  .manual-guide-combined .manual-guide-tips {
+    margin: 0 15px;
+    padding: 21px 0 23px;
+  }
+}
