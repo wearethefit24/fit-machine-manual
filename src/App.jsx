@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, CheckCircle2, ChevronRight,
   ClipboardList, Download, Dumbbell, Edit3, ExternalLink, Film, FolderOpen, Info,
-  Layers3, Link2, LoaderCircle, LockKeyhole, LogOut, MapPin, Menu, Plus, QrCode,
+  Layers3, Link2, LoaderCircle, LockKeyhole, LogOut, MapPin, Menu, Plus, QrCode, ScanQrCode,
   Save, Settings2, Share2, ShieldAlert, Smartphone, Sparkles, Trash2, UploadCloud,
   Video, X
 } from 'lucide-react';
@@ -65,6 +65,150 @@ function Skeleton() { return <div className="space-y-3 pt-6">{[1,2,3,4].map(i =>
 function Alert({ children, kind = 'error' }) { return <div className={`alert ${kind === 'ok' ? 'alert-ok' : ''}`}><Info size={18} className="shrink-0" />{children}</div>; }
 function Empty({ title, description, icon: Icon = FolderOpen }) { return <div className="empty"><div className="empty-icon"><Icon size={28}/></div><div className="font-semibold text-white">{title}</div><p className="text-sm text-neutral-200 leading-relaxed mt-2">{description}</p></div>; }
 function Back({ onClick, label = '戻る' }) { return <button className="back-btn" onClick={onClick}><ArrowLeft size={18}/>{label}</button>; }
+
+function SiteHeader({ logoRevision }) {
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => { setLoaded(false); }, [logoRevision]);
+  return <header className="site-header" aria-label="ジムのロゴ">
+    <div className="site-logo-box">
+      <img src={String('/api/logo?rev=' + logoRevision)} alt="ジムのロゴ"
+        className={loaded ? 'site-logo-img' : 'site-logo-img site-logo-loading'}
+        onLoad={() => setLoaded(true)} onError={() => setLoaded(false)} />
+      {!loaded && <span className="site-logo-fallback" aria-label="WE ARE THE FIT">WE ARE<br/>THE FIT</span>}
+    </div>
+  </header>;
+}
+
+// Only QR codes issued by this site can open a manual from the built-in camera.
+function machineIdFromQr(value, machines) {
+  let url;
+  try { url = new URL(value); } catch { return null; }
+  if (url.origin !== window.location.origin || url.search || url.hash) return null;
+  const match = /^\/machine\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i.exec(url.pathname);
+  if (!match) return null;
+  return machines.find(item => item.id.toLowerCase() === match[1].toLowerCase())?.id || null;
+}
+
+function QrScanner({ machines, onClose, onFound }) {
+  const videoRef = useRef(null);
+  const scannerRef = useRef(null);
+  const finishedRef = useRef(false);
+  const [message, setMessage] = useState('カメラを起動しています…');
+
+  useEffect(() => {
+    let disposed = false;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    (async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('このブラウザではカメラを起動できません。');
+        }
+        const { BrowserQRCodeReader } = await import('@zxing/browser');
+        if (disposed || !videoRef.current) return;
+        const reader = new BrowserQRCodeReader();
+        const controls = await reader.decodeFromConstraints(
+          { audio: false, video: { facingMode: { ideal: 'environment' } } },
+          videoRef.current,
+          (result, error, activeControls) => {
+            if (disposed || finishedRef.current || !result) return;
+            const id = machineIdFromQr(result.getText(), machines);
+            if (!id) {
+              setMessage('このアプリのマシンQRコードを読み取ってください。');
+              return;
+            }
+            finishedRef.current = true;
+            activeControls.stop();
+            onFound(id);
+          }
+        );
+        if (disposed) controls.stop();
+        else {
+          scannerRef.current = controls;
+          setMessage('');
+        }
+      } catch (err) {
+        if (!disposed) {
+          const denied = ['NotAllowedError','PermissionDeniedError','SecurityError'].includes(err?.name);
+          setMessage(denied ? 'カメラの使用が許可されていません。ブラウザの設定からカメラを許可してください。'
+            : 'カメラを起動できません。カメラへのアクセスを確認して再度お試しください。');
+        }
+      }
+    })();
+    return () => {
+      disposed = true;
+      scannerRef.current?.stop();
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [machines, onFound]);
+
+  return <div className="qr-scanner-overlay" role="dialog" aria-modal="true" aria-label="マシンQRコード読み取り">
+    <div className="qr-scanner-header">
+      <strong>マシンのQRコードを読み取る</strong>
+      <button type="button" className="qr-scanner-close" onClick={onClose} aria-label="カメラを閉じる"><X size={24}/></button>
+    </div>
+    <div className="qr-scanner-viewfinder">
+      <video ref={videoRef} autoPlay playsInline muted className="qr-scanner-video"/>
+      <div className="qr-scanner-corners" aria-hidden="true"><ScanQrCode size={100} strokeWidth={1}/></div>
+    </div>
+    <p className="qr-scanner-help" role="status">{message || 'マシンに貼られたQRコードをカメラの中央に合わせてください。'}</p>
+    <button type="button" className="btn btn-secondary qr-scanner-done" onClick={onClose}>閉じる</button>
+  </div>;
+}
+
+function LogoAdmin({ logoRevision, onLogoChanged, notify }) {
+  const [file, setFile] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [exists, setExists] = useState(null);
+  useEffect(() => {
+    let active = true;
+    fetch('/api/logo?rev=' + logoRevision, { method: 'HEAD', cache: 'no-store' })
+      .then(response => { if (active) setExists(response.ok); })
+      .catch(() => { if (active) setExists(null); });
+    return () => { active = false; };
+  }, [logoRevision]);
+  async function save() {
+    if (!file) return notify('ロゴ画像を選択してください。', true);
+    if (file.size > 2 * 1024 * 1024) return notify('画像は2MiB以内にしてください。', true);
+    try {
+      setSaving(true);
+      await api('/api/admin/logo', { method: 'PUT', headers: { 'content-type': file.type || 'application/octet-stream' }, body: file });
+      setFile(null);
+      onLogoChanged();
+      notify('ロゴを保存しました。反映まで少し時間がかかる場合があります。');
+    } catch (err) { notify(err.message, true); }
+    finally { setSaving(false); }
+  }
+  async function remove() {
+    if (!window.confirm('登録済みのロゴを削除しますか？')) return;
+    try {
+      setSaving(true);
+      await api('/api/admin/logo', { method: 'DELETE' });
+      setFile(null);
+      onLogoChanged();
+      notify('ロゴを削除しました。');
+    } catch (err) { notify(err.message, true); }
+    finally { setSaving(false); }
+  }
+  return <section className="admin-card space-y-4">
+    <h2 className="card-title !mb-0">共通ロゴ画像</h2>
+    <p className="text-sm text-neutral-200 leading-relaxed">登録した画像を、管理画面・店舗選択・エリア選択・マシン選択・説明画面の上部中央に固定表示します。</p>
+    <div className="logo-admin-preview">
+      {exists ? <img alt="現在のロゴ" src={'/api/logo?rev=' + logoRevision}/> : <span>{exists === false ? 'ロゴ画像は未登録です' : 'ロゴを確認しています…'}</span>}
+    </div>
+    <Field title="ロゴ画像を選択" hint="PNG・JPEG・WebP・GIF／2MiB以内。横幅の広い画像も枠内に収まるよう表示します。">
+      <input className="field" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={event => setFile(event.target.files?.[0] || null)} />
+    </Field>
+    <button type="button" className="btn btn-primary w-full" disabled={saving || !file} onClick={save}>
+      {saving ? <LoaderCircle className="animate-spin" size={18}/> : <UploadCloud size={18}/>}ロゴ画像を保存
+    </button>
+    <button type="button" className="btn btn-danger w-full" disabled={saving || exists !== true} onClick={remove}>
+      <Trash2 size={17}/> 登録したロゴを削除
+    </button>
+    <p className="text-xs text-neutral-300">画像の保存には既存のCloudflare KVを使用します。更新の表示に時間がかかる場合があります。</p>
+  </section>;
+}
+
 function ViewerSection({ index, title, description, Icon, textValue }) {
   return <section className="manual-section"><div className="section-heading"><div className="section-icon"><Icon size={19}/></div><div><div className="eyebrow">STEP {num(index)}</div><h2 className="font-semibold text-[17px] text-white">{title}</h2></div></div><p className={`manual-text ${textValue ? '' : 'text-neutral-300'}`}>{textValue || '内容はまだ登録されていません。'}</p></section>;
 }
