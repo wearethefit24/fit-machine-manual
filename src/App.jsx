@@ -245,7 +245,7 @@ function Admin({ catalog, refresh, error }) {
   useEffect(() => { if (auth === 'in') tidy().catch(() => {}); }, [auth]);
   function notify(message, isError = false) { setNotice({ message, isError }); }
   async function logout() { try { await api('/api/admin/logout', { method: 'POST' }); } catch {} setAuth('out'); setNotice(null); }
-  return <div className="min-h-screen"><header className="top-header"><div className="shell flex justify-between items-center"><Brand admin/><a href="/" className="text-neutral-200 hover:text-white text-xs flex items-center gap-1"><ExternalLink size={15}/>視聴用</a></div></header>
+  return <div className="min-h-screen">
     <main className="shell pb-22"><div className="hero admin-hero"><div className="eyebrow">STAFF CONTROL CENTER</div><h1 className="hero-title">管理画面<span className="hero-period">.</span></h1><p className="hero-sub">店舗・エリア・マシンとQRコードを一括管理</p></div>
       {notice && <div className="mb-4"><Alert kind={notice.isError ? 'error' : 'ok'}>{notice.message}</Alert><button className="text-xs text-neutral-300 mt-2" onClick={() => setNotice(null)}>閉じる</button></div>}
       {error && <div className="mb-4"><Alert>{error}</Alert></div>}
