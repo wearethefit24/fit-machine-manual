@@ -701,3 +701,103 @@ button, a { touch-action: manipulation; }
   .manual-guide-section { padding: 19px 15px 20px; }
   .manual-item-row { grid-template-columns: 25px minmax(0,1fr) 36px; }
 }
+
+/* Manual detail hierarchy: compact overview, hero instructions, red safety */
+/* Overview is context, not the main action; keep it compact yet legible. */
+.manual-guide-overview {
+  padding: 14px 16px 15px;
+  background: #0c0c0c;
+  border-color: rgba(255,255,255,.18);
+  border-radius: 14px;
+}
+.manual-guide-overview .manual-guide-heading {
+  gap: 9px;
+  margin-bottom: 8px;
+}
+.manual-guide-overview .manual-guide-icon {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+.manual-guide-overview .manual-guide-icon svg { width: 16px; height: 16px; }
+.manual-guide-overview .manual-guide-title {
+  font-size: 15px;
+  font-weight: 750;
+}
+.manual-guide-overview .manual-guide-text,
+.manual-guide-overview .manual-guide-empty {
+  font-size: 14px;
+  line-height: 1.75;
+  color: #dedede;
+}
+
+/* Exercise instructions are the central content: large steps and strong contrast. */
+.manual-guide-instructions {
+  padding: 25px 21px 27px;
+  background: #14191d;
+  border: 1px solid #568ca2;
+  border-radius: 20px;
+  box-shadow: inset 3px 0 0 #6ed5ff;
+}
+.manual-guide-instructions .manual-guide-heading { margin-bottom: 21px; }
+.manual-guide-instructions .manual-guide-title {
+  font-size: clamp(21px, 5.8vw, 25px);
+  font-weight: 850;
+  line-height: 1.32;
+}
+.manual-guide-instructions .manual-guide-icon {
+  flex: 0 0 46px;
+  width: 46px;
+  height: 46px;
+  background: #233440;
+  color: #86dcff;
+  border: 1px solid #45738a;
+}
+.manual-guide-instructions .manual-guide-icon svg { width: 24px; height: 24px; }
+.manual-guide-instructions .manual-steps li {
+  grid-template-columns: 39px minmax(0,1fr);
+  column-gap: 14px;
+  padding-bottom: 17px;
+  font-size: clamp(17px, 4.5vw, 19px);
+  font-weight: 550;
+  line-height: 1.8;
+}
+.manual-guide-instructions .manual-steps li + li {
+  padding-top: 17px;
+  border-color: rgba(134,220,255,.22);
+}
+.manual-guide-instructions .manual-step-number {
+  width: 37px;
+  height: 37px;
+  margin-top: 2px;
+  background: #88ddff;
+  color: #07131b;
+  font-size: 18px;
+  font-weight: 850;
+}
+.manual-guide-instructions .manual-guide-empty { font-size: 16px; line-height: 1.85; }
+
+/* Safety uses red, while all other app sections retain the monochrome base. */
+.manual-guide-warning {
+  background: #2a1316;
+  border: 2px solid #f04d56;
+  box-shadow: inset 4px 0 0 #f04d56;
+  border-radius: 18px;
+}
+.manual-guide-warning .manual-guide-icon {
+  background: #5b2026;
+  border: 1px solid #f04d56;
+  color: #ffb1b5;
+}
+.manual-guide-warning .manual-guide-title { color: #ffd0d3; }
+.manual-guide-warning .manual-bullet-symbol { color: #ff737b; }
+.manual-guide-warning .manual-bullets li + li { border-color: rgba(240,77,86,.27); }
+.manual-guide-warning .manual-guide-empty { color: #f7bdc1; }
+
+@media (max-width: 360px) {
+  .manual-guide-overview { padding: 13px 14px 15px; }
+  .manual-guide-instructions { padding: 20px 15px 23px; }
+  .manual-guide-instructions .manual-guide-title { font-size: 20px; }
+  .manual-guide-instructions .manual-steps li { column-gap: 10px; font-size: 17px; }
+}
