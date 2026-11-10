@@ -231,29 +231,37 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
     else if (isAreaPage && currentStore) navigate(`/store/${currentStore.id}`);
     else navigate('/');
   };
-  // The viewer home is a dedicated, vertically centered store selection screen.
-  // Machine QR deep links and all other screens keep their existing layouts.
+  const [scanOpen, setScanOpen] = useState(false);
+  const showScan = ids.length === 0 || isStorePage || isAreaPage;
+  const scanControls = showScan ? <>
+    <button type="button" className="qr-scan-launcher" aria-label="QRコードを読み取る" onClick={() => setScanOpen(true)}>
+      <ScanQrCode size={44} strokeWidth={2.5}/>
+    </button>
+    {scanOpen && <QrScanner machines={catalog.machines} onClose={() => setScanOpen(false)}
+      onFound={id => { setScanOpen(false); navigate('/machine/' + id); }}/>}
+  </> : null;
+  // The viewer home keeps the logo at the top and QR scan fixed to the bottom.
   if (ids.length === 0) {
-    return <main className="min-h-[100svh] bg-black flex flex-col items-center justify-center px-4 py-10">
-      <div className="w-full max-w-[230px] flex flex-col items-center gap-4">
-        <h1 className="text-white text-sm font-medium text-center">店舗を選択してください</h1>
-        {loading ? <div className="w-full"><Skeleton/></div>
-          : error ? <div className="w-full"><Alert>{error}</Alert><button type="button" onClick={refresh} className="btn btn-primary w-full mt-4">再読み込み</button></div>
-          : catalog.stores.length ? <div className="w-full flex flex-col gap-3">
+    return <div className="min-h-screen">
+      <main className="viewer-home">
+        <h1 className="viewer-home-title">店舗を選択してください</h1>
+        {loading ? <div className="viewer-home-buttons"><Skeleton/></div>
+          : error ? <div className="viewer-home-buttons"><Alert>{error}</Alert><button type="button" onClick={refresh} className="btn btn-primary w-full mt-4">再読み込み</button></div>
+          : catalog.stores.length ? <div className="viewer-home-buttons">
               {catalog.stores.map(item => <button
                 type="button"
                 key={item.id}
-                onClick={() => navigate(`/store/${item.id}`)}
-                className="w-full min-h-[90px] px-2 py-3 bg-black text-white border border-white rounded-xl flex items-center justify-center text-center font-bold leading-tight break-words transition-colors hover:bg-neutral-900 active:bg-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-                style={{fontSize: item.name.length > 5 ? '26px' : item.name.length > 4 ? '32px' : '40px'}}
+                onClick={() => navigate('/store/' + item.id)}
+                className="viewer-store-button"
               >{item.name}</button>)}
             </div>
-          : <div className="w-full"><Empty title="店舗が登録されていません" description="店舗スタッフによる登録をお待ちください。"/></div>}
-      </div>
-    </main>;
+          : <div className="viewer-home-buttons"><Empty title="店舗が登録されていません" description="店舗スタッフによる登録をお待ちください。"/></div>}
+      </main>
+      {scanControls}
+    </div>;
   }
   return <div className="min-h-screen">
-    <main className="shell pb-24">
+    <main className={isMachinePage ? 'shell pb-24' : 'shell pb-48'}>
       <div className="hero"><div className="mb-4">{(isMachinePage || isAreaPage || isStorePage) && <Back onClick={backAction}/>}</div>
         <div className="eyebrow tracking-[.24em]">{label}</div><h1 className="hero-title">{title}<span className="hero-period">.</span></h1>
         <p className="hero-sub">{isMachinePage ? [currentStore?.name, currentArea?.name, machine?.name].filter(Boolean).join(' / ') : isAreaPage ? `${currentStore?.name || '店舗'}のマシンを選択してください` : isStorePage ? `${store?.name || '店舗'}のエリアを選択してください` : 'ご利用中の店舗を選択してください'}</p>
@@ -267,7 +275,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
         <div className="list-caption"><span>{isAreaPage ? 'MACHINES' : isStorePage ? 'AREAS' : 'LOCATIONS'}</span><span>{list.length} ITEMS</span></div>
         {list.map((item, i) => <button className="selection-card group" key={item.id} onClick={() => navigate(`/${isAreaPage ? 'machine' : isStorePage ? 'area' : 'store'}/${item.id}`)}><span className="selection-index">{num(i)}</span><div className="selection-icon">{isAreaPage ? <Dumbbell size={24}/> : isStorePage ? <Layers3 size={24}/> : <MapPin size={24}/>}</div><div className="flex-1 text-left min-w-0"><div className="font-semibold text-white text-[17px] truncate">{item.name}</div><div className="text-xs text-neutral-300 mt-1">{isAreaPage ? '使い方を見る' : isStorePage ? 'マシン一覧を見る' : 'エリア一覧を見る'}</div></div><ChevronRight className="text-white shrink-0 group-hover:translate-x-1 transition-transform" size={22}/></button>)}
       </div> : <Empty title={isAreaPage ? 'マシンが登録されていません' : isStorePage ? 'エリアが登録されていません' : '店舗が登録されていません'} description="店舗スタッフによる登録をお待ちください。"/>}
-    </main><div className="footer-note">FIT MANUAL <span className="px-2">•</span> TRAIN SMART. STAY SAFE.</div>
+    </main>{scanControls}<div className="footer-note">FIT MANUAL <span className="px-2">•</span> TRAIN SMART. STAY SAFE.</div>
   </div>;
 }
 function Chip({ children, active, onClick }) { return <button className={`chip ${active ? 'chip-active' : ''}`} onClick={onClick}>{children}</button>; }
