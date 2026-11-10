@@ -1061,3 +1061,157 @@ html, body {
 .manual-exercise-panel {
   background: var(--app-background);
 }
+
+/* Manual step photos and in-browser 4:3 cropper */
+.manual-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.manual-step-photo {
+  display: block;
+  width: min(100%, 360px);
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.32);
+  background: #111111;
+  padding: 0;
+  margin: 8px 0 0;
+  text-align: left;
+}
+.manual-step-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.manual-step-photo:focus-visible,
+.manual-image-pick:focus-within {
+  outline: 2px solid white;
+  outline-offset: 3px;
+}
+.manual-image-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.94);
+  z-index: 130;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 60px 14px;
+}
+.manual-image-lightbox img {
+  display: block;
+  width: min(100%, 960px);
+  max-height: 85vh;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+}
+.manual-image-lightbox-close {
+  position: absolute;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: #262626;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(255,255,255,.45);
+  border-radius: 50%;
+}
+.manual-item-body { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.manual-item-photo-controls { display: flex; flex-direction: column; gap: 10px; }
+.manual-item-photo-preview {
+  width: min(100%, 300px);
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  border: 1px solid rgba(255,255,255,.35);
+  background: #111111;
+  border-radius: 10px;
+}
+.manual-item-photo-buttons { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; }
+.manual-image-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 8px 11px;
+  background: #171717;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.50);
+  border-radius: 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.manual-image-remove {
+  color: #fca5a5;
+  min-height: 40px;
+  font-size: 12px;
+  padding-inline: 5px;
+}
+.manual-crop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  background: rgba(0,0,0,.91);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(20px + env(safe-area-inset-top, 0px)) 15px calc(20px + env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+}
+.manual-crop-dialog {
+  width: min(100%, 520px);
+  background: #181818;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 18px;
+  padding: 17px;
+  color: #fff;
+  margin: auto;
+}
+.manual-crop-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.manual-crop-header h3 { font-size: 19px; font-weight: 850; }
+.manual-crop-close { flex: 0 0 40px; height: 40px; display: flex; align-items: center; justify-content: center; }
+.manual-crop-help { font-size: 12px; color: #ddd; line-height: 1.6; margin: 10px 0 15px; }
+.manual-crop-canvas-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #111111;
+  border: 1px solid rgba(255,255,255,.35);
+  overflow: hidden;
+  border-radius: 10px;
+}
+.manual-crop-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+.manual-crop-canvas:active { cursor: grabbing; }
+.manual-crop-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ddd;
+  font-size: 12px;
+  pointer-events: none;
+}
+.manual-crop-zoom { display: flex; align-items: center; gap: 12px; font-size: 13px; margin: 20px 0; }
+.manual-crop-zoom input { flex: 1; min-width: 0; accent-color: #fff; }
+.manual-crop-actions { display: flex; gap: 10px; }
+.manual-crop-actions .btn { flex: 1; }
+.manual-crop-error { font-size: 13px; color: #ffb1b5; margin-bottom: 12px; }
+@media (max-width: 360px) {
+  .manual-item-photo-buttons { gap: 7px; }
+  .manual-image-pick { padding: 8px; font-size: 11px; }
+  .manual-crop-dialog { padding: 13px; }
+}
