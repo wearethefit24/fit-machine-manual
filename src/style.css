@@ -1043,3 +1043,21 @@ button, a { touch-action: manipulation; }
     padding-bottom: 17px;
   }
 }
+
+/* Global app background: #111111 */
+:root {
+  --app-background: #111111;
+  background: var(--app-background);
+}
+html, body {
+  background: var(--app-background);
+}
+.site-header,
+.top-header,
+.page-under-header,
+.viewer-home,
+.viewer-machine-picker,
+.manual-page,
+.manual-exercise-panel {
+  background: var(--app-background);
+}
