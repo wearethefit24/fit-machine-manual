@@ -209,6 +209,30 @@ function LogoAdmin({ logoRevision, onLogoChanged, notify }) {
   </section>;
 }
 
+const MANUAL_IMAGE_PREFIX = '@FIT_IMG_V1:';
+function readManualItems(value) {
+  const raw = typeof value === 'string' ? value : '';
+  if (raw.startsWith(MANUAL_IMAGE_PREFIX)) {
+    try {
+      const parsed = JSON.parse(raw.slice(MANUAL_IMAGE_PREFIX.length));
+      if (Array.isArray(parsed)) return parsed.map(item => ({
+        text: typeof item?.text === 'string' ? item.text : '',
+        imageId: typeof item?.imageId === 'string' ? item.imageId : null
+      }));
+    } catch { /* Fall back to displaying the original text. */ }
+  }
+  return raw.split(/\r?\n/).map(text => ({ text, imageId: null }));
+}
+function writeManualItems(items) {
+  const cleaned = items.map(item => ({
+    text: String(item.text || '').replace(/\r?\n/g, ' '),
+    imageId: item.imageId || null
+  }));
+  return cleaned.some(item => item.imageId)
+    ? MANUAL_IMAGE_PREFIX + JSON.stringify(cleaned)
+    : cleaned.map(item => item.text).join('\n');
+}
+// Legacy manuals continue to display without any data migration.
 // Display already-saved text without inventing instructions: one newline = one numbered/bulleted item.
 const GUIDE_SECTIONS = [
   { field: 'overview', title: '概要', kind: 'text', Icon: Info },
@@ -218,31 +242,51 @@ const GUIDE_SECTIONS = [
   { field: 'safety', title: '安全上の注意事項', kind: 'warning', Icon: TriangleAlert },
 ];
 
-function ManualGuideSection({ field, title, kind, Icon, value, joined = false }) {
+function ManualGuideSection({ field, title, kind, Icon, value, joined = false, machineId }) {
+  const [previewImage, setPreviewImage] = useState(null);
   const text = typeof value === 'string' ? value.trim() : '';
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const stripPrefix = line => line.replace(/^(?:[0-9]{1,2}[.．、)]|[①-⑳]|[・●•\-])\s*/, '').trim();
+  const stepItems = kind === 'steps'
+    ? readManualItems(value).filter(item => item.text.trim() || item.imageId)
+    : [];
+  const hasContent = kind === 'steps' ? stepItems.length > 0 : !!text;
   const sectionClass = joined
     ? 'manual-exercise-part manual-exercise-part-' + field
     : 'manual-guide-section' + (field === 'overview' ? ' manual-guide-overview' : '') + (field === 'adjustment' ? ' manual-guide-adjustment' : '') + (field === 'instructions' ? ' manual-guide-instructions' : '') + (field === 'tips' ? ' manual-guide-tips' : '') + (kind === 'warning' ? ' manual-guide-warning' : '');
-  return <section className={sectionClass}
+  return <><section className={sectionClass}
     aria-labelledby={'manual-' + field}>
     <div className="manual-guide-heading">
-      {field !== 'overview' && field !== 'adjustment' && field !== 'tips' && field !== 'tips' && <span className="manual-guide-icon" aria-hidden="true"><Icon size={21} strokeWidth={2}/></span>}
+      {field !== 'overview' && field !== 'adjustment' && field !== 'tips' && <span className="manual-guide-icon" aria-hidden="true"><Icon size={21} strokeWidth={2}/></span>}
       <h2 id={'manual-' + field} className="manual-guide-title">{title}</h2>
     </div>
-    {!text ? <p className="manual-guide-empty">内容はまだ登録されていません。</p>
+    {!hasContent ? <p className="manual-guide-empty">内容はまだ登録されていません。</p>
       : kind === 'steps' ? <ol className="manual-steps">
-          {lines.map((line, i) => <li key={i}>
+          {stepItems.map((item, i) => <li key={i}>
             <span className="manual-step-number" aria-hidden="true">{i + 1}</span>
-            <span>{stripPrefix(line) || line}</span>
+            <div className="manual-step-body">
+              {item.text.trim() && <span>{stripPrefix(item.text) || item.text}</span>}
+              {item.imageId && machineId && <button type="button" className="manual-step-photo"
+                aria-label={title + 'の画像' + (i + 1) + 'を拡大'}
+                onClick={() => setPreviewImage('/api/manual-image/' + machineId + '/' + item.imageId)}>
+                <img src={'/api/manual-image/' + machineId + '/' + item.imageId}
+                  alt={title + ' ' + (i + 1) + ' の説明画像'} loading="lazy"/>
+              </button>}
+            </div>
           </li>)}
         </ol>
       : kind === 'bullets' || kind === 'warning' ? <ul className="manual-bullets">
           {lines.map((line, i) => <li key={i}><span className="manual-bullet-symbol" aria-hidden="true">・</span><span>{stripPrefix(line) || line}</span></li>)}
         </ul>
       : <p className="manual-guide-text">{text}</p>}
-  </section>;
+  </section>
+  {previewImage && <div className="manual-image-lightbox" role="dialog" aria-modal="true" aria-label="手順画像の拡大表示"
+    onClick={() => setPreviewImage(null)}>
+    <button type="button" className="manual-image-lightbox-close" onClick={() => setPreviewImage(null)}
+      aria-label="画像を閉じる"><X size={23}/></button>
+    <img src={previewImage} alt="手順の拡大画像" onClick={event => event.stopPropagation()}/>
+  </div>}
+  </>;
 }
 function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   const ids = route.split('/').filter(Boolean);
@@ -359,12 +403,12 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
                 field === 'instructions' ? <div className="manual-exercise-panel" role="group"
                   aria-label="実施手順とポイント" key="instructions-and-tips">
                   <ManualGuideSection joined field={field} title={title} kind={kind}
-                    Icon={Icon} value={machine[field]}/>
+                    Icon={Icon} value={machine[field]} machineId={machine.id}/>
                   <ManualGuideSection joined field="tips" title="ポイント" kind="bullets"
-                    Icon={Sparkles} value={machine.tips}/>
+                    Icon={Sparkles} value={machine.tips} machineId={machine.id}/>
                 </div> :
                 <ManualGuideSection key={field} field={field} title={title}
-                  kind={kind} Icon={Icon} value={machine[field]}/>)}
+                  kind={kind} Icon={Icon} value={machine[field]} machineId={machine.id}/>)}
             </div>
             <button type="button" className="btn btn-secondary w-full manual-return" onClick={backAction}>
               <ArrowLeft size={18}/>マシン一覧に戻る
