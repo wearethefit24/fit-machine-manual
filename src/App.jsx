@@ -218,11 +218,14 @@ const GUIDE_SECTIONS = [
   { field: 'safety', title: '安全上の注意事項', kind: 'warning', Icon: ShieldAlert },
 ];
 
-function ManualGuideSection({ field, title, kind, Icon, value }) {
+function ManualGuideSection({ field, title, kind, Icon, value, joined = false }) {
   const text = typeof value === 'string' ? value.trim() : '';
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const stripPrefix = line => line.replace(/^(?:[0-9]{1,2}[.．、)]|[①-⑳]|[・●•\-])\s*/, '').trim();
-  return <section className={'manual-guide-section' + (field === 'overview' ? ' manual-guide-overview' : '') + (field === 'adjustment' ? ' manual-guide-adjustment' : '') + (field === 'instructions' ? ' manual-guide-instructions' : '') + (field === 'tips' ? ' manual-guide-tips' : '') + (kind === 'warning' ? ' manual-guide-warning' : '')}
+  const sectionClass = joined
+    ? 'manual-exercise-part manual-exercise-part-' + field
+    : 'manual-guide-section' + (field === 'overview' ? ' manual-guide-overview' : '') + (field === 'adjustment' ? ' manual-guide-adjustment' : '') + (field === 'instructions' ? ' manual-guide-instructions' : '') + (field === 'tips' ? ' manual-guide-tips' : '') + (kind === 'warning' ? ' manual-guide-warning' : '');
+  return <section className={sectionClass}
     aria-labelledby={'manual-' + field}>
     <div className="manual-guide-heading">
       <span className="manual-guide-icon" aria-hidden="true"><Icon size={21} strokeWidth={2}/></span>
@@ -353,11 +356,11 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
             <div className="manual-guide-sections">
               {GUIDE_SECTIONS.map(({ field, title, kind, Icon }) =>
                 field === 'tips' ? null :
-                field === 'instructions' ? <div className="manual-guide-combined" role="group"
+                field === 'instructions' ? <div className="manual-exercise-panel" role="group"
                   aria-label="実施手順とポイント" key="instructions-and-tips">
-                  <ManualGuideSection field={field} title={title} kind={kind}
+                  <ManualGuideSection joined field={field} title={title} kind={kind}
                     Icon={Icon} value={machine[field]}/>
-                  <ManualGuideSection field="tips" title="ポイント" kind="bullets"
+                  <ManualGuideSection joined field="tips" title="ポイント" kind="bullets"
                     Icon={Sparkles} value={machine.tips}/>
                 </div> :
                 <ManualGuideSection key={field} field={field} title={title}
