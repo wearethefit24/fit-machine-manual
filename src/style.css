@@ -135,3 +135,111 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   outline:2px solid #fff; outline-offset:3px;
 }
 ::selection { color:#000; background:#fff; }
+
+/* Shared fixed logo, store chooser, and in-app QR camera */
+:root { --site-header-height: 116px; }
+.site-header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: var(--site-header-height);
+  background: #000;
+  display: flex; justify-content: center; align-items: center;
+  z-index: 35;
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px;
+}
+.site-logo-box {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  width: 180px; height: 88px; max-height: 100%;
+}
+.site-logo-img {
+  width: 100%; height: 100%; object-fit: contain;
+  display: block; position: relative; z-index: 1;
+}
+.site-logo-loading { visibility: hidden; position: absolute; }
+.site-logo-fallback {
+  background: #171717; color: #fff; font-size: 20px; font-weight: 900;
+  line-height: 1.05; letter-spacing: .16em; text-align: left;
+  padding: 8px 11px;
+}
+.page-under-header { padding-top: var(--site-header-height); min-height: 100svh; }
+
+.viewer-home {
+  min-height: calc(100svh - var(--site-header-height));
+  width: 100%;
+  padding: 24px 20px 155px;
+  display: flex; flex-direction: column; align-items: center;
+}
+.viewer-home-title {
+  color: #fff; text-align: center; font-weight: 800;
+  font-size: clamp(21px, 5.7vw, 31px); line-height: 1.45;
+  margin: 8px 0 36px;
+}
+.viewer-home-buttons {
+  width: min(79vw, 340px);
+  display: flex; flex-direction: column; gap: 34px;
+}
+.viewer-store-button {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; min-height: 113px; padding: 18px 12px;
+  color: #000; background: #fff; border: 2px solid #fff;
+  border-radius: 21px; text-align: center; font-weight: 850;
+  font-size: clamp(28px, 8.2vw, 44px); line-height: 1.18;
+  overflow-wrap: anywhere;
+  transition: background-color .15s, transform .15s;
+}
+.viewer-store-button:active { background: #dedede; transform: scale(.98); }
+.viewer-store-button:hover { background: #ebebeb; }
+.viewer-store-button:focus-visible { outline: 2px solid #fff; outline-offset: 5px; }
+
+.qr-scan-launcher {
+  position: fixed; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); left: 50%;
+  transform: translateX(-50%);
+  width: 86px; height: 86px; border-radius: 999px;
+  background: #fff; color: #000; border: 2px solid #fff;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 40; box-shadow: 0 8px 30px rgba(0,0,0,.75);
+}
+.qr-scan-launcher:active { background: #dedede; transform: translateX(-50%) scale(.95); }
+.qr-scan-launcher:focus-visible { outline: 2px solid #fff; outline-offset: 5px; }
+
+.qr-scanner-overlay {
+  position: fixed; inset: 0; z-index: 80;
+  background: #000; color: #fff;
+  display: flex; flex-direction: column; align-items: center;
+  padding: calc(20px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px));
+}
+.qr-scanner-header {
+  width: min(100%, 480px);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 58px; font-size: 15px; font-weight: 800;
+}
+.qr-scanner-close { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid #fff; border-radius: 50%; color: #fff; }
+.qr-scanner-viewfinder {
+  position: relative; margin-top: 20px;
+  width: min(100%, 440px); max-height: 58svh; aspect-ratio: 3 / 4;
+  overflow: hidden; border: 1px solid #fff; border-radius: 16px;
+  background: #161616; display: flex; align-items: center; justify-content: center;
+}
+.qr-scanner-video { width: 100%; height: 100%; object-fit: cover; background: #111; }
+.qr-scanner-corners { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; color: #fff; filter: drop-shadow(0 1px 3px #000); }
+.qr-scanner-help { max-width: 410px; text-align: center; color: #fff; font-size: 13px; line-height: 1.8; min-height: 48px; margin-top: 18px; }
+.qr-scanner-done { width: min(100%, 280px); margin-top: auto; }
+
+.tab-bar-four { grid-template-columns: repeat(4, minmax(0,1fr)); }
+.tab-bar-four .chip { font-size: 11px; gap: 4px; }
+.tab-bar-four .chip svg { width: 16px; height: 16px; }
+.logo-admin-preview {
+  min-height: 160px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(255,255,255,.46); border-radius: 14px;
+  background: #000; color: #ccc; padding: 15px; text-align: center;
+}
+.logo-admin-preview img { max-width: 100%; max-height: 190px; object-fit: contain; }
+
+@media (max-width: 360px) {
+  :root { --site-header-height: 105px; }
+  .viewer-home { padding-inline: 12px; }
+  .viewer-home-title { font-size: 20px; }
+  .viewer-home-buttons { gap: 24px; width: min(85vw, 305px); }
+  .viewer-store-button { min-height: 95px; font-size: 31px; }
+  .qr-scan-launcher { width: 78px; height: 78px; }
+}
