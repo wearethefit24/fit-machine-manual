@@ -465,3 +465,40 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .manual-guide-heading { gap: 9px; }
   .manual-guide-icon { flex-basis: 38px; width: 38px; height: 38px; }
 }
+
+/* Repeatable admin fields and Japanese bullet lists */
+.manual-items-editor { display:flex; flex-direction:column; gap:10px; }
+.manual-items-rows { display:flex; flex-direction:column; gap:12px; }
+.manual-item-row {
+  display:grid;
+  grid-template-columns:28px minmax(0,1fr) 36px;
+  align-items:start;
+  gap:9px;
+}
+.manual-item-marker {
+  min-height:48px;
+  display:flex; align-items:center; justify-content:center;
+  color:#fff; font-size:20px; font-weight:750;
+}
+.manual-item-input {
+  width:100%;
+  min-width:0;
+  min-height:64px;
+  resize:vertical;
+  line-height:1.55;
+}
+.manual-item-remove { width:36px; height:44px; }
+.manual-item-add { align-self:stretch; min-height:46px; }
+.manual-bullets { list-style:none; padding:0; }
+.manual-bullets li {
+  display:grid;
+  grid-template-columns:1.25em minmax(0,1fr);
+  gap:3px;
+  padding-left:0;
+  align-items:start;
+}
+.manual-bullet-symbol { color:#fff; font-weight:800; }
+@media (max-width:360px) {
+  .manual-item-row { grid-template-columns:25px minmax(0,1fr) 34px; gap:6px; }
+  .manual-item-marker { font-size:18px; }
+}
