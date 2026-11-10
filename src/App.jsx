@@ -425,7 +425,9 @@ function AreasAdmin({ catalog, refresh, notify, tidy }) {
 const initialFields = { overview: '', adjustment: '', instructions: '', tips: '', safety: '' };
 
 function ManualItemsEditor({ title, field, value, onChange }) {
-  const items = (value || '').split(/\r?\n/);
+  const items = (value || '').split(/\r?\n/).map(line =>
+    line.replace(/^\s*(?:[①-⑳]|[・●•]|\d{1,2}[.．、)](?=\s))\s*/, '')
+  );
   const numbered = field === 'adjustment' || field === 'instructions';
   const marker = index => numbered
     ? index < 20 ? String.fromCodePoint(0x2460 + index) : String(index + 1) + '.'
