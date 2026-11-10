@@ -87,7 +87,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
     else if (isAreaPage && currentStore) navigate(`/store/${currentStore.id}`);
     else navigate('/');
   };
-  return <div className="min-h-screen"><header className="top-header"><div className="shell flex items-center justify-between"><Brand/><span className="top-label"><span className="tiny-dot"/> FREE ACCESS</span></div></header>
+  return <div className="min-h-screen">
     <main className="shell pb-24">
       <div className="hero"><div className="mb-4">{(isMachinePage || isAreaPage || isStorePage) && <Back onClick={backAction}/>}</div>
         <div className="eyebrow tracking-[.24em]">{label}</div><h1 className="hero-title">{title}<span className="hero-period">.</span></h1>
