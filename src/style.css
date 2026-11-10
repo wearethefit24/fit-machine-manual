@@ -1000,3 +1000,24 @@ button, a { touch-action: manipulation; }
   .manual-exercise-panel .manual-steps li { grid-template-columns: 27px minmax(0,1fr); gap: 8px; }
   .manual-exercise-panel .manual-step-number { width: 26px; height: 26px; font-size: 13px; }
 }
+
+/* Filled red warning triangle with white exclamation mark */
+.manual-guide-warning .manual-guide-icon {
+  background: transparent;
+  border: 0;
+  color: #f04d56;
+}
+.manual-guide-warning .manual-guide-icon svg {
+  width: 30px;
+  height: 30px;
+  color: #f04d56;
+  stroke-width: 2.2;
+}
+.manual-guide-warning .manual-guide-icon svg > :first-child {
+  fill: #f04d56;
+  stroke: #f04d56;
+}
+.manual-guide-warning .manual-guide-icon svg > :not(:first-child) {
+  stroke: #fff;
+  stroke-width: 2.4;
+}
