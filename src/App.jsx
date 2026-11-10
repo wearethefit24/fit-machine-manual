@@ -228,7 +228,7 @@ function ManualGuideSection({ field, title, kind, Icon, value, joined = false })
   return <section className={sectionClass}
     aria-labelledby={'manual-' + field}>
     <div className="manual-guide-heading">
-      {field !== 'overview' && field !== 'adjustment' && field !== 'tips' && <span className="manual-guide-icon" aria-hidden="true"><Icon size={21} strokeWidth={2}/></span>}
+      {field !== 'overview' && field !== 'adjustment' && field !== 'tips' && field !== 'tips' && <span className="manual-guide-icon" aria-hidden="true"><Icon size={21} strokeWidth={2}/></span>}
       <h2 id={'manual-' + field} className="manual-guide-title">{title}</h2>
     </div>
     {!text ? <p className="manual-guide-empty">内容はまだ登録されていません。</p>
