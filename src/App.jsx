@@ -336,7 +336,6 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   if (isMachinePage) {
     return <div className="min-h-screen">
       <main className="shell manual-page">
-        <div className="manual-back"><Back onClick={backAction} label="マシン一覧へ戻る"/></div>
         {loading ? <Skeleton/>
           : error ? <div className="mt-6"><Alert>{error}</Alert><button onClick={refresh} className="btn btn-primary mt-4">再読み込み</button></div>
           : !machine ? <Empty title="マシンが見つかりません" description="URLが変更されたか、マシンが削除された可能性があります。"/>
