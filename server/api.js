@@ -1,0 +1,331 @@
+// Cloudflare Pages Functions: D1 stores strongly-consistent metadata; Workers KV stores video chunks.
+const CHUNK_SIZE = 8 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
+const SESSION_SECONDS = 12 * 60 * 60;
+const encoder = new TextEncoder();
+
+function json(value, status = 200, headers = {}) {
+  return new Response(JSON.stringify(value), { status, headers: {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff', ...headers,
+  } });
+}
+function fail(message, status = 400) { return json({ error: message }, status); }
+function validName(s, max = 80) { return typeof s === 'string' && s.trim().length > 0 && s.trim().length <= max; }
+function validId(s) { return typeof s === 'string' && /^[0-9a-f-]{36}$/i.test(s); }
+function fields(obj) {
+  const out = {};
+  for (const key of ['overview', 'adjustment', 'instructions', 'tips', 'safety']) {
+    const val = obj[key] ?? '';
+    if (typeof val !== 'string' || val.length > 15000) throw new Error(`${key}は15,000文字以内で入力してください。`);
+    out[key] = val;
+  }
+  return out;
+}
+async function body(req) {
+  if (!(req.headers.get('content-type') || '').includes('application/json')) throw new Error('JSON形式で送信してください。');
+  if (Number(req.headers.get('content-length') || 0) > 120000) throw new Error('入力内容が大きすぎます。');
+  return await req.json();
+}
+async function hmac(value, secret) {
+  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(value)));
+  return [...signature].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+function constantEquals(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+async function sessionValid(req, env) {
+  if (!env.ADMIN_SESSION_SECRET) return false;
+  const raw = req.headers.get('cookie')?.split(';').map(s => s.trim()).find(s => s.startsWith('fit_admin='))?.slice(10);
+  if (!raw) return false;
+  const [expires, sig, extra] = raw.split('.');
+  if (extra || !/^\d{10,15}$/.test(expires || '') || !/^[a-f0-9]{64}$/.test(sig || '') || Number(expires) < Date.now()) return false;
+  return constantEquals(sig, await hmac(expires, env.ADMIN_SESSION_SECRET));
+}
+async function hashIp(req) {
+  const ip = req.headers.get('cf-connecting-ip') || 'local';
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(ip)));
+  return [...bytes].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+async function login(req, env) {
+  if (!env.ADMIN_PASSWORD || !env.ADMIN_SESSION_SECRET || env.ADMIN_PASSWORD.length < 12 || env.ADMIN_SESSION_SECRET.length < 32) return fail('管理者用シークレットが設定されていません。', 503);
+  const ip = await hashIp(req);
+  const now = Date.now();
+  const attempt = await env.DB.prepare('SELECT attempts, window_start FROM login_attempts WHERE ip_hash=?').bind(ip).first();
+  if (attempt && now - attempt.window_start < 900000 && attempt.attempts >= 8) return fail('試行回数が多すぎます。15分後に再試行してください。', 429);
+  const data = await body(req);
+  const correct = typeof data.password === 'string' && constantEquals(await hmac(data.password, env.ADMIN_SESSION_SECRET), await hmac(env.ADMIN_PASSWORD, env.ADMIN_SESSION_SECRET));
+  if (!correct) {
+    const reset = !attempt || now - attempt.window_start >= 900000;
+    await env.DB.prepare('INSERT INTO login_attempts(ip_hash,attempts,window_start) VALUES(?,?,?) ON CONFLICT(ip_hash) DO UPDATE SET attempts=excluded.attempts,window_start=excluded.window_start')
+      .bind(ip, reset ? 1 : attempt.attempts + 1, reset ? now : attempt.window_start).run();
+    return fail('管理者パスワードが違います。', 401);
+  }
+  await env.DB.prepare('DELETE FROM login_attempts WHERE ip_hash=?').bind(ip).run();
+  const expires = String(Date.now() + SESSION_SECONDS * 1000);
+  const sig = await hmac(expires, env.ADMIN_SESSION_SECRET);
+  return json({ ok: true }, 200, { 'set-cookie': `fit_admin=${expires}.${sig}; HttpOnly; Secure; SameSite=Strict; Path=/api/admin; Max-Age=${SESSION_SECONDS}` });
+}
+async function catalog(db) {
+  const [storeRows, areaRows, machineRows] = await Promise.all([
+    db.prepare('SELECT id,name,position FROM stores ORDER BY position,name').all(),
+    db.prepare('SELECT id,store_id AS storeId,name,position FROM areas ORDER BY position,name').all(),
+    db.prepare(`SELECT m.id,m.area_id AS areaId,m.name,m.position,m.overview,m.adjustment,m.instructions,m.tips,m.safety,
+      CASE WHEN v.status='ready' THEN v.id ELSE NULL END AS videoId,
+      CASE WHEN v.status='ready' THEN v.filename ELSE NULL END AS videoFilename
+      FROM machines m LEFT JOIN videos v ON m.video_id=v.id ORDER BY m.position,m.name`).all(),
+  ]);
+  return { stores: storeRows.results, areas: areaRows.results, machines: machineRows.results };
+}
+// Track deletion independent of the video FK so a store can be removed without losing cleanup metadata.
+async function enqueueCleanup(db, videos) {
+  if (!videos.length) return;
+  await db.batch(videos.map(v => db.prepare('INSERT OR IGNORE INTO video_cleanup_jobs(video_id,chunk_count,next_index) VALUES(?,?,0)')
+    .bind(v.id, v.chunk_count)));
+}
+async function drainCleanup(env) {
+  const jobs = (await env.DB.prepare('SELECT video_id,chunk_count,next_index FROM video_cleanup_jobs ORDER BY rowid LIMIT 25').all()).results;
+  let budget = 20;
+  for (const job of jobs) {
+    if (!budget) break;
+    const count = Math.min(budget, job.chunk_count - job.next_index);
+    if (count <= 0) {
+      await env.DB.prepare('DELETE FROM video_cleanup_jobs WHERE video_id=?').bind(job.video_id).run();
+      continue;
+    }
+    // One chunk delete = one KV subrequest; stay under Workers Free's 50/request limit.
+    for (let n = job.next_index; n < job.next_index + count; n++) await env.VIDEO_KV.delete(`video:${job.video_id}:${n}`);
+    const next = job.next_index + count;
+    if (next >= job.chunk_count) await env.DB.prepare('DELETE FROM video_cleanup_jobs WHERE video_id=?').bind(job.video_id).run();
+    else await env.DB.prepare('UPDATE video_cleanup_jobs SET next_index=MAX(next_index,?) WHERE video_id=?').bind(next, job.video_id).run();
+    budget -= count;
+  }
+  const remaining = await env.DB.prepare('SELECT COALESCE(SUM(chunk_count-next_index),0) AS count FROM video_cleanup_jobs').first();
+  return { remaining: remaining?.count || 0 };
+}
+async function deletingVideos(db, scope, id) {
+  let sql;
+  if (scope === 'store') sql = `SELECT v.id,v.chunk_count FROM videos v JOIN machines m ON v.machine_id=m.id JOIN areas a ON m.area_id=a.id WHERE a.store_id=?`;
+  else if (scope === 'area') sql = 'SELECT v.id,v.chunk_count FROM videos v JOIN machines m ON v.machine_id=m.id WHERE m.area_id=?';
+  else sql = 'SELECT id,chunk_count FROM videos WHERE machine_id=?';
+  return (await db.prepare(sql).bind(id).all()).results;
+}
+async function adminRequest({ request: req, env, waitUntil }, parts) {
+  const method = req.method;
+  if (parts[0] === 'login' && method === 'POST') return login(req, env);
+  if (parts[0] === 'logout' && method === 'POST') return json({ ok: true }, 200, { 'set-cookie': 'fit_admin=; Path=/api/admin; Max-Age=0; HttpOnly; Secure; SameSite=Strict' });
+  if (!(await sessionValid(req, env))) return fail('管理者認証が必要です。', 401);
+  if (parts[0] === 'session' && method === 'GET') return json({ ok: true });
+  if (parts[0] === 'maintenance' && method === 'POST') return json(await drainCleanup(env));
+  const [type, id, action, index] = parts;
+  const db = env.DB;
+
+  if (type === 'stores') {
+    if (!id && method === 'POST') {
+      const d = await body(req); if (!validName(d.name)) return fail('店舗名を入力してください。');
+      const newId = crypto.randomUUID();
+      await db.prepare('INSERT INTO stores(id,name,position) VALUES(?,?,(SELECT COALESCE(MAX(position),0)+1 FROM stores))').bind(newId, d.name.trim()).run();
+      return json({ ok: true, id: newId }, 201);
+    }
+    if (!validId(id)) return fail('店舗IDが不正です。');
+    if (method === 'PATCH') {
+      const d = await body(req); if (!validName(d.name)) return fail('店舗名を入力してください。');
+      const r = await db.prepare('UPDATE stores SET name=? WHERE id=?').bind(d.name.trim(), id).run();
+      return r.meta.changes ? json({ ok: true }) : fail('店舗がありません。', 404);
+    }
+    if (method === 'DELETE') {
+      const old = await deletingVideos(db, 'store', id);
+      const r = await db.prepare('DELETE FROM stores WHERE id=?').bind(id).run();
+      if (r.meta.changes) { await enqueueCleanup(db, old); waitUntil(drainCleanup(env)); }
+      return r.meta.changes ? json({ ok: true }) : fail('店舗がありません。', 404);
+    }
+  }
+  if (type === 'areas') {
+    if (!id && method === 'POST') {
+      const d = await body(req);
+      if (!validName(d.name) || !validId(d.storeId)) return fail('店舗とエリア名を指定してください。');
+      const store = await db.prepare('SELECT id FROM stores WHERE id=?').bind(d.storeId).first();
+      if (!store) return fail('店舗がありません。', 404);
+      const newId = crypto.randomUUID();
+      await db.prepare('INSERT INTO areas(id,store_id,name,position) VALUES(?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM areas WHERE store_id=?))')
+        .bind(newId, d.storeId, d.name.trim(), d.storeId).run();
+      return json({ ok: true, id: newId }, 201);
+    }
+    if (!validId(id)) return fail('エリアIDが不正です。');
+    if (action === 'reorder' && method === 'POST') {
+      const d = await body(req); const ids = d.ids;
+      const current = (await db.prepare('SELECT id FROM machines WHERE area_id=?').bind(id).all()).results.map(r => r.id);
+      if (!Array.isArray(ids) || ids.length !== current.length || new Set(ids).size !== ids.length || !ids.every(x => current.includes(x))) return fail('並び順が一致していません。ページを再読み込みしてください。', 409);
+      await db.batch(ids.map((mid, i) => db.prepare('UPDATE machines SET position=?,updated_at=datetime(\'now\') WHERE id=? AND area_id=?').bind(i + 1, mid, id)));
+      return json({ ok: true });
+    }
+    if (method === 'PATCH') {
+      const d = await body(req);
+      if (!validName(d.name) || !validId(d.storeId)) return fail('店舗とエリア名を指定してください。');
+      const r = await db.prepare('UPDATE areas SET name=?,store_id=? WHERE id=?').bind(d.name.trim(), d.storeId, id).run();
+      return r.meta.changes ? json({ ok: true }) : fail('エリアがありません。', 404);
+    }
+    if (method === 'DELETE') {
+      const old = await deletingVideos(db, 'area', id);
+      const r = await db.prepare('DELETE FROM areas WHERE id=?').bind(id).run();
+      if (r.meta.changes) { await enqueueCleanup(db, old); waitUntil(drainCleanup(env)); }
+      return r.meta.changes ? json({ ok: true }) : fail('エリアがありません。', 404);
+    }
+  }
+  if (type === 'machines') {
+    if (!id && method === 'POST') {
+      const d = await body(req);
+      if (!validName(d.name) || !validId(d.areaId)) return fail('エリアとマシン名を指定してください。');
+      const area = await db.prepare('SELECT id FROM areas WHERE id=?').bind(d.areaId).first(); if (!area) return fail('エリアがありません。', 404);
+      const v = fields(d); const newId = crypto.randomUUID();
+      await db.prepare(`INSERT INTO machines(id,area_id,name,position,overview,adjustment,instructions,tips,safety)
+        VALUES(?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM machines WHERE area_id=?),?,?,?,?,?)`)
+        .bind(newId, d.areaId, d.name.trim(), d.areaId, v.overview, v.adjustment, v.instructions, v.tips, v.safety).run();
+      return json({ ok: true, id: newId }, 201);
+    }
+    if (!validId(id)) return fail('マシンIDが不正です。');
+    if (action === 'video' && index === 'init' && method === 'POST') {
+      const d = await body(req);
+      if (typeof d.filename !== 'string' || !d.filename.trim() || d.filename.length > 180 || !['video/mp4', 'video/webm', 'video/quicktime'].includes(d.mimeType) || !Number.isInteger(d.size) || d.size <= 0 || d.size > MAX_VIDEO_BYTES) return fail('MP4・WebM・MOVの動画（80MiB以内）を選択してください。');
+      const machine = await db.prepare('SELECT id FROM machines WHERE id=?').bind(id).first(); if (!machine) return fail('マシンがありません。', 404);
+      const videoId = crypto.randomUUID(); const count = Math.ceil(d.size / CHUNK_SIZE);
+      await db.prepare('INSERT INTO videos(id,machine_id,filename,mime_type,byte_size,chunk_size,chunk_count,status) VALUES(?,?,?,?,?,?,?,\'uploading\')')
+        .bind(videoId, id, d.filename, d.mimeType, d.size, CHUNK_SIZE, count).run();
+      return json({ ok: true, videoId, chunkSize: CHUNK_SIZE, chunkCount: count }, 201);
+    }
+    if (method === 'PATCH') {
+      const d = await body(req); if (!validName(d.name) || !validId(d.areaId)) return fail('エリアとマシン名を指定してください。');
+      const area = await db.prepare('SELECT id FROM areas WHERE id=?').bind(d.areaId).first(); if (!area) return fail('エリアがありません。', 404);
+      const v = fields(d); const r = await db.prepare(`UPDATE machines SET area_id=?,name=?,overview=?,adjustment=?,instructions=?,tips=?,safety=?,updated_at=datetime('now') WHERE id=?`)
+        .bind(d.areaId, d.name.trim(), v.overview, v.adjustment, v.instructions, v.tips, v.safety, id).run();
+      return r.meta.changes ? json({ ok: true }) : fail('マシンがありません。', 404);
+    }
+    if (method === 'DELETE') {
+      const old = await deletingVideos(db, 'machine', id);
+      const r = await db.prepare('DELETE FROM machines WHERE id=?').bind(id).run();
+      if (r.meta.changes) { await enqueueCleanup(db, old); waitUntil(drainCleanup(env)); }
+      return r.meta.changes ? json({ ok: true }) : fail('マシンがありません。', 404);
+    }
+  }
+  if (type === 'videos' && validId(id)) {
+    const v = await db.prepare('SELECT * FROM videos WHERE id=?').bind(id).first();
+    if (!v) return fail('動画が見つかりません。', 404);
+    if (action === 'chunks' && method === 'PUT') {
+      const i = Number(index);
+      if (v.status !== 'uploading' || !/^\d+$/.test(index || '') || i >= v.chunk_count) return fail('アップロード先が無効です。');
+      const arr = await req.arrayBuffer();
+      const expected = i < v.chunk_count - 1 ? v.chunk_size : v.byte_size - i * v.chunk_size;
+      if (arr.byteLength !== expected) return fail('動画のチャンク容量が一致しません。');
+      await env.VIDEO_KV.put(`video:${id}:${i}`, arr);
+      await db.prepare('INSERT INTO video_chunks(video_id,chunk_index,byte_size) VALUES(?,?,?) ON CONFLICT(video_id,chunk_index) DO UPDATE SET byte_size=excluded.byte_size')
+        .bind(id, i, arr.byteLength).run();
+      return json({ ok: true });
+    }
+    if (action === 'finish' && method === 'POST') {
+      if (v.status !== 'uploading') return fail('アップロードは完了済みです。');
+      const counts = await db.prepare('SELECT COUNT(*) AS pieces,COALESCE(SUM(byte_size),0) AS bytes FROM video_chunks WHERE video_id=?').bind(id).first();
+      if (counts.pieces !== v.chunk_count || counts.bytes !== v.byte_size) return fail('アップロードが完了していません。', 409);
+      const machine = await db.prepare('SELECT video_id FROM machines WHERE id=?').bind(v.machine_id).first();
+      if (!machine) return fail('マシンがありません。', 404);
+      await db.batch([
+        db.prepare("UPDATE videos SET status='ready' WHERE id=?").bind(id),
+        db.prepare("UPDATE machines SET video_id=?,updated_at=datetime('now') WHERE id=?").bind(id, v.machine_id),
+      ]);
+      if (machine.video_id && machine.video_id !== id) {
+        const old = await db.prepare('SELECT id,chunk_count FROM videos WHERE id=?').bind(machine.video_id).first();
+        await db.prepare('DELETE FROM videos WHERE id=?').bind(machine.video_id).run();
+        if (old) { await enqueueCleanup(db, [old]); waitUntil(drainCleanup(env)); }
+      }
+      return json({ ok: true });
+    }
+    if (method === 'DELETE' && !action) {
+      const machine = await db.prepare('SELECT video_id FROM machines WHERE id=?').bind(v.machine_id).first();
+      await db.batch([
+        db.prepare('UPDATE machines SET video_id=NULL WHERE video_id=?').bind(id),
+        db.prepare('DELETE FROM videos WHERE id=?').bind(id),
+      ]);
+      await enqueueCleanup(db, [v]); waitUntil(drainCleanup(env));
+      return json({ ok: true });
+    }
+  }
+  return fail('操作が見つかりません。', 404);
+}
+
+export function byteRange(range, total) {
+  if (!range) return { start: 0, end: total - 1, partial: false };
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+  if (!match || (!match[1] && !match[2])) return null;
+  let start, end;
+  if (match[1] === '') {
+    const length = Number(match[2]);
+    if (!Number.isSafeInteger(length) || length <= 0) return null;
+    start = Math.max(0, total - length); end = total - 1;
+  } else {
+    start = Number(match[1]); end = match[2] ? Number(match[2]) : total - 1;
+  }
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= total || end < start) return null;
+  return { start, end: Math.min(end, total - 1), partial: true };
+}
+async function serveVideo(req, env, id) {
+  if (!validId(id)) return fail('動画がありません。', 404);
+  const v = await env.DB.prepare(`SELECT v.* FROM videos v JOIN machines m ON m.video_id=v.id WHERE v.id=? AND v.status='ready'`).bind(id).first();
+  if (!v) return fail('動画がありません。', 404);
+  const range = byteRange(req.headers.get('range'), v.byte_size);
+  if (!range) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${v.byte_size}`, 'accept-ranges': 'bytes' } });
+  const { start, end, partial } = range;
+  const headers = {
+    'content-type': v.mime_type,
+    'content-length': String(end - start + 1),
+    'accept-ranges': 'bytes',
+    'cache-control': 'public, max-age=60',
+    'x-content-type-options': 'nosniff',
+    ...(partial ? { 'content-range': `bytes ${start}-${end}/${v.byte_size}` } : {}),
+  };
+  if (req.method === 'HEAD') return new Response(null, { status: partial ? 206 : 200, headers });
+  const firstChunk = Math.floor(start / v.chunk_size), finalChunk = Math.floor(end / v.chunk_size);
+  let current = firstChunk;
+  const stream = new ReadableStream({
+    async pull(controller) {
+      if (current > finalChunk) { controller.close(); return; }
+      const part = await env.VIDEO_KV.get(`video:${id}:${current}`, 'arrayBuffer');
+      if (!part) { controller.error(new Error('動画データの反映待ちです。再読み込みしてください。')); return; }
+      const chunkStart = current * v.chunk_size;
+      const from = Math.max(0, start - chunkStart);
+      const to = Math.min(part.byteLength, end - chunkStart + 1);
+      controller.enqueue(new Uint8Array(part).subarray(from, to));
+      current++;
+    }
+  });
+  return new Response(stream, { status: partial ? 206 : 200, headers });
+}
+
+export async function handleApi(context) {
+  const { request: req, env } = context;
+  if (!env.DB || !env.VIDEO_KV) return fail('Cloudflare D1とKVのバインディングが未設定です。', 503);
+  const url = new URL(req.url);
+  const path = url.pathname.split('/').filter(Boolean);
+  if (path[0] !== 'api') return fail('APIがありません。', 404);
+  try {
+    if (req.method === 'GET' && path.length === 2 && path[1] === 'catalog') return json(await catalog(env.DB));
+    if ((req.method === 'GET' || req.method === 'HEAD') && path[1] === 'video' && path.length === 3) return serveVideo(req, env, path[2]);
+    if (path[1] === 'admin') {
+      if (!['GET', 'POST', 'PATCH', 'DELETE', 'PUT'].includes(req.method)) return fail('メソッドが許可されていません。', 405);
+      if (!['GET', 'HEAD'].includes(req.method)) {
+        const origin = req.headers.get('origin');
+        if (origin && origin !== url.origin) return fail('不正な送信元です。', 403);
+      }
+      return adminRequest(context, path.slice(2));
+    }
+    return fail('APIがありません。', 404);
+  } catch (err) {
+    if (err instanceof SyntaxError) return fail('JSONの形式が正しくありません。');
+    if (err?.message && (/15,000|JSON形式|入力内容/.test(err.message))) return fail(err.message);
+    console.error('API failure', err?.message);
+    return fail('サーバーでエラーが発生しました。', 500);
+  }
+}
