@@ -916,3 +916,82 @@ test('a hidden legacy machine stays hidden when its manual is converted into a s
   })).status,200);
   assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,2);
 });
+
+test('retrying a manual save with the same registration UUID cannot create duplicate machines',async()=>{
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const storeIds=[];
+  for(const name of ['A店','B店']){
+    storeIds.push((await (await fetchApi('/api/admin/stores','POST',{name})).json()).id);
+  }
+  const area=(await (await fetchApi('/api/admin/areas','POST',{
+    storeId:storeIds[0],name:'ウェイト'
+  })).json()).id;
+  const newGroupId=crypto.randomUUID();
+  const payload={
+    newGroupId,name:'チェストプレス',areaName:'ウェイト',
+    storeSelections:[
+      {storeId:storeIds[0],areaId:area},
+      {storeId:storeIds[1],areaId:null,areaName:'ウェイト'}
+    ],
+    overview:'初回保存',adjustment:'',instructions:'',tips:'',safety:''
+  };
+  const first=await fetchApi('/api/admin/manual-groups','POST',payload);
+  assert.equal(first.status,201);
+  const created=await first.json();
+  assert.equal(created.groupId,newGroupId);
+  // Simulate losing the first HTTP response, then retrying from the same form.
+  const second=await fetchApi('/api/admin/manual-groups','POST',{
+    ...payload,overview:'再試行で変更'
+  });
+  assert.ok(second.ok);
+  const retried=await second.json();
+  assert.equal(retried.groupId,newGroupId);
+  assert.deepEqual(retried.ids,created.ids);
+  assert.deepEqual(retried.areaIds,created.areaIds);
+  const all=(await (await fetchApi('/api/admin/catalog')).json());
+  assert.equal(all.machines.length,2);
+  assert.ok(all.machines.every(m=>m.overview==='再試行で変更'));
+  assert.equal((await env.DB.prepare('SELECT count(*) AS count FROM machine_manual_groups').first()).count,1);
+});
+
+test('normal shared manual save does not probe every store legacy KV image key',async()=>{
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const storeIds=[];
+  for(let i=0;i<12;i++){
+    const store=(await (await fetchApi('/api/admin/stores','POST',{name:'店舗'+i})).json()).id;
+    storeIds.push(store);
+    await fetchApi('/api/admin/areas','POST',{storeId:store,name:'マシン'});
+  }
+  const newGroupId=crypto.randomUUID();
+  const entry={newGroupId,name:'ラットプルダウン',areaName:'マシン',
+    storeIds:storeIds,overview:'最初の説明',adjustment:'',instructions:'',
+    tips:'',safety:''};
+  const created=await fetchApi('/api/admin/manual-groups','POST',entry);
+  assert.equal(created.status,201);
+  const group=await created.json();
+  const imageIds=Array.from({length:7},()=>crypto.randomUUID());
+  const items=imageIds.map(imageId=>({text:'調整',imageId}));
+  const adjustment='@FIT_IMG_V1:'+JSON.stringify(items);
+  const jpeg=Uint8Array.from([255,216,255,224,0,16,74,70,73,70,0,1]).buffer;
+  for(const imageId of imageIds){
+    assert.equal((await fetchApi('/api/admin/manual-groups/'+group.groupId+'/images/'+imageId,'PUT',jpeg)).status,200);
+  }
+  const origGet=env.VIDEO_KV.get.bind(env.VIDEO_KV);
+  let readCount=0;
+  env.VIDEO_KV.get=(...args)=>{
+    readCount++;
+    if(readCount>=50)throw new Error('KV subrequest count exceeded');
+    return origGet(...args);
+  };
+  const update=await fetchApi('/api/admin/manual-groups','POST',{
+    ...entry,groupId:group.groupId,newGroupId:undefined,
+    adjustment,overview:'更新'
+  });
+  assert.equal(update.status,200);
+  assert.ok(readCount<10,'Unexpected legacy KV probing for unchanged store assignments: '+readCount);
+  const machines=(await (await fetchApi('/api/catalog')).json()).machines;
+  assert.equal(machines.length,12);
+  assert.ok(machines.every(machine=>machine.overview==='更新'));
+});
