@@ -440,9 +440,22 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
       const stores = (await db.prepare(`SELECT id FROM stores WHERE id IN (${storeIds.map(() => '?').join(',')})`)
         .bind(...storeIds).all()).results;
       if (stores.length !== storeIds.length) return fail('選択した店舗が見つかりません。',404);
+      // The browser sends a stable UUID for a new registration. If Cloudflare
+      // sends a 500 response after the DB transaction committed, retrying
+      // reuses that same manual rather than silently making a duplicate.
+      if(d.newGroupId !== undefined && !validId(d.newGroupId))
+        return fail('登録IDが不正です。');
       let groupId = d.groupId || null;
       let originalMachineName = d.name.trim();
       let current = [];
+      if(!groupId && !d.seedMachineId && d.newGroupId){
+        const recovered=await db.prepare('SELECT id FROM machine_manual_groups WHERE id=?')
+          .bind(d.newGroupId).first();
+        if(recovered){
+          groupId=d.newGroupId;
+          current=await groupMachines(db,groupId);
+        }
+      }
       if (groupId) {
         if (!validId(groupId)) return fail('取扱説明書IDが不正です。');
         const exists = await db.prepare('SELECT id FROM machine_manual_groups WHERE id=?').bind(groupId).first();
@@ -484,7 +497,7 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
           }
         }
       }
-      if (!groupId) groupId=crypto.randomUUID();
+      if (!groupId) groupId=d.newGroupId || crypto.randomUUID();
       // Resolve each store's chosen area without changing other stores' placement.
       const areaRows=(await db.prepare(`SELECT id,store_id AS storeId,name
         FROM areas WHERE store_id IN (${storeIds.map(()=>'?').join(',')})
