@@ -753,9 +753,9 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   const initialArea = catalog.areas.find(a => a.id === (machine?.areaId || initialAreaId)) || catalog.areas[0];
   const [storeId, setStoreId] = useState(initialArea?.storeId || '');
   const [areaId, setAreaId] = useState(initialArea?.id || '');
-  // A new manual may be published to several stores, with one destination area per store.
+  // A manual can be copied to several areas within each selected store.
   const [targetAreas, setTargetAreas] = useState(() =>
-    initialArea ? { [initialArea.storeId]: initialArea.id } : {});
+    initialArea ? { [initialArea.storeId]: [initialArea.id] } : {});
   const createdTargetsRef = useRef(null);
   const [targetsLocked, setTargetsLocked] = useState(false);
   const [name, setName] = useState(machine?.name || '');
@@ -794,28 +794,53 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   const shownAreas = catalog.areas.filter(a => a.storeId === storeId);
   function onStoreChange(id) { setStoreId(id); setAreaId(catalog.areas.find(a => a.storeId === id)?.id || ''); }
   function toggleDestination(store, selected) {
-    if (targetsLocked) return;
+    if (pending || targetsLocked) return;
     setTargetAreas(previous => {
       const next = { ...previous };
       if (!selected) { delete next[store.id]; return next; }
-      const defaultArea = catalog.areas.find(area => area.storeId === store.id);
-      next[store.id] = defaultArea?.id ?? null;
+      const total = Object.values(previous).reduce((n, ids) => n + ids.length, 0);
+      if (total >= 20) return previous;
+      const firstArea = catalog.areas.find(area => area.storeId === store.id);
+      next[store.id] = [firstArea?.id ?? null];
       return next;
     });
   }
-  const destinationSelections = catalog.stores
-    .filter(store => Object.prototype.hasOwnProperty.call(targetAreas, store.id))
-    .map(store => ({ storeId: store.id, areaId: targetAreas[store.id] }));
-  const destinationAreaIds = machine
-    ? [areaId]
-    : destinationSelections.map(destination => destination.areaId);
+  function toggleArea(storeId, areaId, checked) {
+    if (pending || targetsLocked) return;
+    setTargetAreas(previous => {
+      const current = previous[storeId];
+      if (!Array.isArray(current)) return previous;
+      const next = { ...previous };
+      if (!checked) {
+        const rest = current.filter(id => id !== areaId);
+        if (rest.length) next[storeId] = rest;
+        else delete next[storeId];
+        return next;
+      }
+      if (current.includes(areaId)) return previous;
+      const total = Object.values(previous).reduce((n, ids) => n + ids.length, 0);
+      if (total >= 20) return previous;
+      next[storeId] = [...current, areaId];
+      return next;
+    });
+  }
+  const destinationSelections = catalog.stores.flatMap(store =>
+    (targetAreas[store.id] || []).map(areaId => ({ storeId: store.id, areaId })));
+  const destinationStoreCount = catalog.stores.filter(store =>
+    Array.isArray(targetAreas[store.id]) && targetAreas[store.id].length).length;
   function selectEveryStore() {
     if (pending || targetsLocked) return;
-    const targets = {};
-    for (const store of catalog.stores.slice(0, 20)) {
-      targets[store.id] = catalog.areas.find(area => area.storeId === store.id)?.id ?? null;
-    }
-    setTargetAreas(targets);
+    setTargetAreas(previous => {
+      const next = { ...previous };
+      let count = Object.values(next).reduce((n, ids) => n + ids.length, 0);
+      for (const store of catalog.stores) {
+        if (count >= 20) break;
+        if (Array.isArray(next[store.id]) && next[store.id].length) continue;
+        next[store.id] = [catalog.areas.find(area => area.storeId === store.id)?.id ?? null];
+        count++;
+      }
+      return next;
+    });
   }
   async function save() {
     if (!name.trim() || (!machine && !destinationSelections.length) ||
@@ -827,12 +852,12 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       notify('マシン名と登録先の店舗・エリアを指定してください。', true);
       return;
     }
-    if (!machine && destinationAreaIds.length > 20) {
-      notify('登録先は20店舗以内にしてください。', true);
+    if (!machine && destinationSelections.length > 20) {
+      notify('登録先は20件以内にしてください。', true);
       return;
     }
     if (createdTargetsRef.current &&
-      (createdTargetsRef.current.length !== destinationAreaIds.length ||
+      (createdTargetsRef.current.length !== destinationSelections.length ||
        createdTargetsRef.current.some((record, index) => record.storeId !== destinationSelections[index]?.storeId ||
          (destinationSelections[index]?.areaId !== null &&
            record.areaId !== destinationSelections[index].areaId)))) {
@@ -877,7 +902,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
         const target = destinations[targetIndex];
         for (let imageIndex = 0; imageIndex < photos.length; imageIndex++) {
           const imageId = photos[imageIndex];
-          setProgress('画像を保存しています（店舗 ' + (targetIndex + 1) + ' / ' +
+          setProgress('画像を保存しています（登録先 ' + (targetIndex + 1) + ' / ' +
             destinations.length + '、画像 ' + (imageIndex + 1) + ' / ' + photos.length + '）');
           await api(`/api/admin/machines/${target.id}/images/${imageId}`, {
             method: 'PUT', headers: { 'content-type': 'image/jpeg' },
@@ -885,7 +910,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
           });
         }
         if (!newlyCreated || photos.length) {
-          setProgress('取扱説明書を登録しています… ' + (targetIndex + 1) + ' / ' + destinations.length);
+          setProgress('取扱説明書を保存しています… ' + (targetIndex + 1) + ' / ' + destinations.length);
           await send(`/api/admin/machines/${target.id}`, 'PATCH', {
             name: name.trim(), areaId: target.areaId, ...fields
           });
@@ -899,7 +924,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       Object.values(previewsToRevoke).forEach(photo => URL.revokeObjectURL(photo.url));
       const firstId = destinations[0].id;
       notify(machine ? 'マシンの情報を保存しました。' :
-        destinations.length + '店舗に取扱説明書を登録しました。');
+        destinations.length + '件の取扱説明書を登録しました。');
       onSaved(firstId);
     } catch (e) {
       notify(`${e.message}（登録が一部完了している場合があります）`, true);
@@ -926,7 +951,8 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       <div className="manual-multistore-list">
         {catalog.stores.map(store => {
           const storeAreas = catalog.areas.filter(area => area.storeId === store.id);
-          const selected = Object.prototype.hasOwnProperty.call(targetAreas, store.id);
+          const selectedAreaIds = targetAreas[store.id] || [];
+          const selected = selectedAreaIds.length > 0;
           return <div className="manual-multistore-row" key={store.id}>
             <label className="manual-multistore-checkbox">
               <input type="checkbox" checked={selected}
@@ -934,25 +960,26 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
                   (!selected && destinationSelections.length >= 20)}
                 onChange={event => toggleDestination(store, event.target.checked)}/>
               <span>{store.name}</span>
-              {!storeAreas.length && <span className="manual-multistore-hint">エリア自動作成</span>}
+              <span className="manual-multistore-hint">
+                {storeAreas.length ? selected && selectedAreaIds.length + 'エリア選択中' : 'エリア自動作成'}
+              </span>
             </label>
             {selected && (storeAreas.length
-              ? <label className="manual-multistore-area">
-                  <span>配置エリア</span>
-                  <select className={fieldInput} aria-label={store.name + 'の配置エリア'}
-                    value={targetAreas[store.id] ?? ''}
-                    disabled={pending || targetsLocked}
-                    onChange={event => setTargetAreas(previous => ({
-                      ...previous, [store.id]: event.target.value
-                    }))}>
-                    {storeAreas.map(area => <option key={area.id} value={area.id}>{area.name}</option>)}
-                  </select>
-                </label>
+              ? <div className="manual-multistore-areas" role="group" aria-label={store.name + 'の配置エリア'}>
+                  <div className="manual-multistore-area-heading">登録するエリア（複数選択可）</div>
+                  {storeAreas.map(area => <label className="manual-multistore-area-choice" key={area.id}>
+                    <input type="checkbox" checked={selectedAreaIds.includes(area.id)}
+                      disabled={pending || targetsLocked ||
+                        (!selectedAreaIds.includes(area.id) && destinationSelections.length >= 20)}
+                      onChange={event => toggleArea(store.id, area.id, event.target.checked)}/>
+                    <span>{area.name}</span>
+                  </label>)}
+                </div>
               : <p className="manual-multistore-area-note">登録時に「マシン」エリアを自動作成します。</p>)}
           </div>;
         })}
       </div>
-      <p className="manual-multistore-note">選択中：{destinationSelections.length}店舗（最大20店舗）。各店舗に同じ取扱説明書を登録します。エリアがない店舗では「マシン」エリアを自動作成します。</p>
+      <p className="manual-multistore-note">選択中：{destinationStoreCount}店舗・{destinationSelections.length}エリア（登録先は最大20件）。選んだ各エリアに同じ取扱説明書を登録します。エリアがない店舗では「マシン」エリアを自動作成します。</p>
     </div>}<Field title="マシン名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：チェストプレス"/></Field>
     <div className="divider-line"/>
     {CONTENT_FIELDS.map(([key, title], i) => key === 'overview'
@@ -960,7 +987,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       : <ManualItemsEditor key={key} title={`${num(i + 1)} ${title}`} field={key}
           value={fields[key]} onChange={value => setFields(prev => ({ ...prev, [key]: value }))}
           onCrop={beginCrop} imagePreviews={imagePreviews} machineId={workingMachineId.current}/>)}
-    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'マシン情報を更新' : destinationSelections.length > 1 ? destinationSelections.length + '店舗に取説を登録' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}
+    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'マシン情報を更新' : destinationSelections.length > 1 ? destinationSelections.length + 'エリアに取説を登録' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}
     {cropRequest && <ManualImageCropper file={cropRequest.file} onApply={acceptCrop}
       onCancel={() => setCropRequest(null)}/>}
   </div>;
