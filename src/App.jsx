@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, CheckCircle2, ChevronRight,
   ClipboardList, Download, Dumbbell, Edit3, ExternalLink, FolderOpen, ImagePlus, Info,
@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {getViewerParentRoute,shouldCompleteSwipe} from './swipeNavigation.js';
+import {resetPageScroll} from './scrollNavigation.js';
 
 const EMPTY = { stores: [], areas: [], machines: [] };
 const CONTENT_FIELDS = [
@@ -31,13 +32,13 @@ const fieldInput = 'field';
 function useRoute() {
   const [route, setRoute] = useState(window.location.pathname);
   useEffect(() => {
-    const update = () => { setRoute(window.location.pathname); window.scrollTo({ top: 0, behavior: 'instant' }); };
+    const update = () => { setRoute(window.location.pathname); };
     window.addEventListener('popstate', update);
     return () => window.removeEventListener('popstate', update);
   }, []);
   function navigate(path) {
     if (window.location.pathname !== path) window.history.pushState({}, '', path);
-    setRoute(path); window.scrollTo({ top: 0, behavior: 'instant' });
+    setRoute(path);
   }
   return [route, navigate];
 }
@@ -360,6 +361,11 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   const lookedUp = isMachinePage && machineLookup.id === ids[1] ? machineLookup : null;
   const machine = lookedUp?.status === 'ready' ? lookedUp.machine : null;
   const machineLoading = isMachinePage && (!lookedUp || lookedUp.status === 'loading');
+  // Loading the complete manual replaces a short placeholder. Reset again
+  // after that layout change so the machine name stays above the overview.
+  useLayoutEffect(() => {
+    if(isMachinePage && lookedUp?.status==='ready')resetPageScroll(window,document);
+  },[isMachinePage,ids[1],lookedUp?.status]);
   const store = ids[0] === 'store' ? catalog.stores.find(s => s.id === ids[1]) : null;
   const area = ids[0] === 'area' ? catalog.areas.find(a => a.id === ids[1]) : null;
   const currentStore = store || (area ? catalog.stores.find(s => s.id === area.storeId) : null) || (machine ? catalog.stores.find(s => s.id === catalog.areas.find(a => a.id === machine.areaId)?.storeId) : null);
@@ -1549,6 +1555,9 @@ function Admin({ catalog, refresh, error, logoRevision, onLogoChanged }) {
 export default function App() {
   const { catalog, loading, error, refresh } = useCatalog();
   const [route, navigate] = useRoute();
+  // Reset AFTER React commits the new route, not before it updates the DOM.
+  // This also applies to a QR link opened directly in a new browser tab.
+  useLayoutEffect(() => {resetPageScroll(window,document);},[route]);
   const [logoRevision, setLogoRevision] = useState(() => Date.now());
   const onLogoChanged = () => setLogoRevision(Date.now());
   const page = route === '/admin' || route.startsWith('/admin/')
