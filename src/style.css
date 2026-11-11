@@ -1278,3 +1278,38 @@ html, body {
   .manual-multistore-checkbox { gap: 8px; font-size: 13px; }
   .manual-multistore-area { margin-left: 27px; }
 }
+
+/* Multi-store selection actions and automatic destination areas */
+.manual-multistore-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.manual-multistore-heading .field-label {
+  margin-bottom: 0;
+  margin-right: auto;
+}
+.manual-multistore-select-all,
+.manual-multistore-clear {
+  font-size: 12px;
+  color: #fff;
+  background: #202020;
+  border: 1px solid rgba(255,255,255,.45);
+  padding: 7px 10px;
+  border-radius: 9px;
+  white-space: nowrap;
+}
+.manual-multistore-heading button:disabled {
+  opacity: .4;
+}
+.manual-multistore-row:has(input:checked) {
+  border-color: rgba(255,255,255,.75);
+}
+.manual-multistore-area-note {
+  color: #d4d4d4;
+  font-size: 12px;
+  margin: 10px 0 2px 30px;
+  line-height: 1.6;
+}
