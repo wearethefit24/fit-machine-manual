@@ -7,6 +7,7 @@ import {
   X, ZoomIn
 } from 'lucide-react';
 import QRCode from 'qrcode';
+import {getViewerParentRoute,shouldCompleteSwipe} from './swipeNavigation.js';
 
 const EMPTY = { stores: [], areas: [], machines: [] };
 const CONTENT_FIELDS = [
@@ -1359,6 +1360,124 @@ function Login({ onLogin, notify }) {
   async function submit(e) { e.preventDefault(); try { setPending(true); await send('/api/admin/login', 'POST', { password }); setPassword(''); onLogin(); } catch (err) { notify(err.message, true); } finally { setPending(false); } }
   return <div className="min-h-[75vh] flex items-center justify-center"><form className="login-card w-full" onSubmit={submit}><div className="mx-auto w-15 h-15 rounded-2xl flex items-center justify-center bg-white/10 text-white mb-6"><LockKeyhole size={28}/></div><div className="eyebrow text-center">STAFF ONLY</div><h1 className="text-2xl font-bold text-center mt-3 mb-3">管理者アクセス</h1><p className="text-sm text-neutral-200 text-center leading-relaxed mb-6">一般の利用者は認証不要です。<br/>編集には管理者パスワードが必要です。</p><Field title="管理者パスワード"><input type="password" autoComplete="current-password" className={fieldInput} value={password} onChange={e => setPassword(e.target.value)} placeholder="管理者パスワード" required /></Field><button className="btn btn-primary w-full mt-5" disabled={pending}>{pending ? <LoaderCircle size={18} className="animate-spin"/> : <LockKeyhole size={17}/>}管理画面を開く</button></form></div>;
 }
+
+// iPhone-style interactive back swipe for the read-only visitor pages.
+// Preserve vertical scrolling, keep modals/crop tools independent, and move
+// the foreground exactly as far as the finger has travelled.
+function SwipeBackViewer({ catalog, loading, error, route, navigate, refresh }) {
+  const previousRoute=getViewerParentRoute(route,catalog);
+  const hostRef=useRef(null);
+  const navigateRef=useRef(navigate);
+  const [showPrevious,setShowPrevious]=useState(false);
+  navigateRef.current=navigate;
+
+  useEffect(()=>{
+    const host=hostRef.current;
+    if(!host || !previousRoute) return undefined;
+    let gesture=null;
+    let settling=false;
+    let settleTimer=null;
+
+    function reset(){
+      host.style.removeProperty('--swipe-back-x');
+      host.classList.remove('is-swipe-dragging','is-swipe-settling');
+      settling=false;
+      setShowPrevious(false);
+    }
+    function start(event){
+      if(settling || gesture || event.touches.length!==1) return;
+      if(window.matchMedia && !window.matchMedia('(pointer: coarse)').matches) return;
+      const target=event.target;
+      if(target instanceof Element && target.closest(
+        'input,textarea,select,[contenteditable="true"],[role="dialog"],'+
+        '.manual-image-lightbox,.manual-crop-backdrop,[data-swipe-back-ignore]'
+      ))return;
+      const touch=event.touches[0];
+      gesture={
+        id:touch.identifier,x:touch.clientX,y:touch.clientY,
+        mode:null,distance:0,sampleX:0,sampleTime:performance.now()
+      };
+    }
+    function move(event){
+      if(!gesture)return;
+      if(event.touches.length!==1){gesture.mode='ignore';return;}
+      const touch=Array.from(event.touches).find(t=>t.identifier===gesture.id);
+      if(!touch)return;
+      const dx=touch.clientX-gesture.x;
+      const dy=touch.clientY-gesture.y;
+      if(gesture.mode===null){
+        if(Math.hypot(dx,dy)<12)return;
+        // An ordinary up/down scroll or left swipe must remain untouched.
+        if(dx<=0 || Math.abs(dx)<Math.abs(dy)*1.18){
+          gesture.mode='ignore';
+          return;
+        }
+        gesture.mode='drag';
+        host.classList.add('is-swipe-dragging');
+        setShowPrevious(true);
+      }
+      if(gesture.mode!=='drag')return;
+      const distance=Math.min(window.innerWidth,Math.max(0,dx));
+      gesture.distance=distance;
+      host.style.setProperty('--swipe-back-x',distance+'px');
+      const now=performance.now();
+      if(now-gesture.sampleTime>=40){
+        gesture.sampleX=distance;
+        gesture.sampleTime=now;
+      }
+      if(event.cancelable)event.preventDefault();
+    }
+    function settle(complete){
+      host.classList.remove('is-swipe-dragging');
+      host.classList.add('is-swipe-settling');
+      host.style.setProperty('--swipe-back-x',(complete?window.innerWidth:0)+'px');
+      settling=true;
+      const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      settleTimer=window.setTimeout(()=>{
+        if(complete) navigateRef.current(previousRoute);
+        reset();
+      },reduced?0:240);
+    }
+    function end(){
+      if(!gesture)return;
+      const finished=gesture;
+      gesture=null;
+      if(finished.mode!=='drag')return;
+      const elapsed=Math.max(1,performance.now()-finished.sampleTime);
+      const velocity=Math.max(0,(finished.distance-finished.sampleX)/elapsed);
+      settle(shouldCompleteSwipe(finished.distance,window.innerWidth,velocity));
+    }
+    function cancel(){
+      if(gesture?.mode==='drag')settle(false);
+      gesture=null;
+    }
+    host.addEventListener('touchstart',start,{passive:true});
+    host.addEventListener('touchmove',move,{passive:false});
+    host.addEventListener('touchend',end,{passive:true});
+    host.addEventListener('touchcancel',cancel,{passive:true});
+    return ()=>{
+      if(settleTimer!==null)window.clearTimeout(settleTimer);
+      host.removeEventListener('touchstart',start);
+      host.removeEventListener('touchmove',move);
+      host.removeEventListener('touchend',end);
+      host.removeEventListener('touchcancel',cancel);
+      host.style.removeProperty('--swipe-back-x');
+      host.classList.remove('is-swipe-dragging','is-swipe-settling');
+    };
+  },[route,previousRoute]);
+
+  return <div className="swipe-back-host" ref={hostRef}>
+    {showPrevious && previousRoute && <div className="swipe-back-behind"
+      aria-hidden="true" inert="">
+      <Viewer catalog={catalog} loading={loading} error={error}
+        route={previousRoute} navigate={navigate} refresh={refresh}/>
+    </div>}
+    <div className="swipe-back-current">
+      <Viewer catalog={catalog} loading={loading} error={error}
+        route={route} navigate={navigate} refresh={refresh}/>
+    </div>
+  </div>;
+}
 function Admin({ catalog, refresh, error, logoRevision, onLogoChanged }) {
   const [auth, setAuth] = useState('checking');
   const [tab, setTab] = useState('machines');
@@ -1392,6 +1511,6 @@ export default function App() {
   const onLogoChanged = () => setLogoRevision(Date.now());
   const page = route === '/admin' || route.startsWith('/admin/')
     ? <Admin catalog={catalog} refresh={refresh} error={error} logoRevision={logoRevision} onLogoChanged={onLogoChanged}/>
-    : <Viewer catalog={catalog} loading={loading} error={error} route={route} navigate={navigate} refresh={refresh}/>;
+    : <SwipeBackViewer catalog={catalog} loading={loading} error={error} route={route} navigate={navigate} refresh={refresh}/>;
   return <><SiteHeader logoRevision={logoRevision}/><div className="page-under-header">{page}</div></>;
 }
