@@ -268,13 +268,32 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
   if (type === 'machines') {
     if (!id && method === 'POST') {
       const d = await body(req);
-      if (!validName(d.name) || !validId(d.areaId)) return fail('エリアとマシン名を指定してください。');
-      const area = await db.prepare('SELECT id FROM areas WHERE id=?').bind(d.areaId).first(); if (!area) return fail('エリアがありません。', 404);
-      const v = fields(d); const newId = crypto.randomUUID();
-      await db.prepare(`INSERT INTO machines(id,area_id,name,position,overview,adjustment,instructions,tips,safety)
-        VALUES(?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM machines WHERE area_id=?),?,?,?,?,?)`)
-        .bind(newId, d.areaId, d.name.trim(), d.areaId, v.overview, v.adjustment, v.instructions, v.tips, v.safety).run();
-      return json({ ok: true, id: newId }, 201);
+      if (!validName(d.name)) return fail('マシン名を入力してください。');
+      // One copy per store, with the destination area chosen for that store.
+      // A D1 batch makes multi-store registration all-or-nothing without a schema migration.
+      const areaIds = d.areaIds === undefined ? [d.areaId] : d.areaIds;
+      if (!Array.isArray(areaIds) || !areaIds.length || areaIds.length > 20 ||
+          areaIds.some(areaId => !validId(areaId)) ||
+          new Set(areaIds).size !== areaIds.length) {
+        return fail('登録先のエリアを1～20件、重複せずに指定してください。');
+      }
+      const placeholders = areaIds.map(() => '?').join(',');
+      const found = (await db.prepare(`SELECT id,store_id AS storeId FROM areas WHERE id IN (${placeholders})`)
+        .bind(...areaIds).all()).results;
+      if (found.length !== areaIds.length) return fail('指定したエリアが見つかりません。', 404);
+      if (new Set(found.map(area => area.storeId)).size !== areaIds.length) {
+        return fail('1つの店舗につき、登録先エリアを1つ選択してください。');
+      }
+      const v = fields(d);
+      const ids = areaIds.map(() => crypto.randomUUID());
+      const statements = areaIds.map((areaId, index) =>
+        db.prepare(`INSERT INTO machines(id,area_id,name,position,overview,adjustment,instructions,tips,safety)
+          VALUES(?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM machines WHERE area_id=?),?,?,?,?,?)`)
+          .bind(ids[index], areaId, d.name.trim(), areaId,
+            v.overview, v.adjustment, v.instructions, v.tips, v.safety)
+      );
+      await db.batch(statements);
+      return json({ ok: true, id: ids[0], ids, areaIds }, 201);
     }
     if (!validId(id)) return fail('マシンIDが不正です。');
     if (action === 'images' && validId(index) && method === 'PUT') {
