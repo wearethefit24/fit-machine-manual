@@ -762,9 +762,11 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   const initialArea = catalog.areas.find(a => a.id === (machine?.areaId || initialAreaId)) || catalog.areas[0];
   const [storeId, setStoreId] = useState(initialArea?.storeId || '');
   const [areaId, setAreaId] = useState(initialArea?.id || '');
-  // A manual can be copied to several areas within each selected store.
-  const [targetAreas, setTargetAreas] = useState(() =>
-    initialArea ? { [initialArea.storeId]: [initialArea.id] } : {});
+  // A machine belongs to one area category, regardless of how many stores carry it.
+  const areaNames = [...new Set(catalog.areas.map(area => area.name.trim()).filter(Boolean))];
+  const [selectedAreaName, setSelectedAreaName] = useState(initialArea?.name.trim() || areaNames[0] || '');
+  const [selectedStoreIds, setSelectedStoreIds] = useState(() =>
+    initialArea?.storeId ? [initialArea.storeId] : []);
   const createdTargetsRef = useRef(null);
   const [targetsLocked, setTargetsLocked] = useState(false);
   const [name, setName] = useState(machine?.name || '');
@@ -825,57 +827,25 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   }
   const shownAreas = catalog.areas.filter(a => a.storeId === storeId);
   function onStoreChange(id) { setStoreId(id); setAreaId(catalog.areas.find(a => a.storeId === id)?.id || ''); }
-  function toggleDestination(store, selected) {
+  function toggleDestination(storeId, selected) {
     if (pending || targetsLocked) return;
-    setTargetAreas(previous => {
-      const next = { ...previous };
-      if (!selected) { delete next[store.id]; return next; }
-      const total = Object.values(previous).reduce((n, ids) => n + ids.length, 0);
-      if (total >= 20) return previous;
-      const firstArea = catalog.areas.find(area => area.storeId === store.id);
-      next[store.id] = [firstArea?.id ?? null];
-      return next;
-    });
+    setSelectedStoreIds(previous => selected
+      ? previous.includes(storeId) || previous.length >= 20 ? previous : [...previous, storeId]
+      : previous.filter(id => id !== storeId));
   }
-  function toggleArea(storeId, areaId, checked) {
-    if (pending || targetsLocked) return;
-    setTargetAreas(previous => {
-      const current = previous[storeId];
-      if (!Array.isArray(current)) return previous;
-      const next = { ...previous };
-      if (!checked) {
-        const rest = current.filter(id => id !== areaId);
-        if (rest.length) next[storeId] = rest;
-        else delete next[storeId];
-        return next;
-      }
-      if (current.includes(areaId)) return previous;
-      const total = Object.values(previous).reduce((n, ids) => n + ids.length, 0);
-      if (total >= 20) return previous;
-      next[storeId] = [...current, areaId];
-      return next;
-    });
-  }
-  const destinationSelections = catalog.stores.flatMap(store =>
-    (targetAreas[store.id] || []).map(areaId => ({ storeId: store.id, areaId })));
-  const destinationStoreCount = catalog.stores.filter(store =>
-    Array.isArray(targetAreas[store.id]) && targetAreas[store.id].length).length;
+  const destinationSelections = catalog.stores
+    .filter(store => selectedStoreIds.includes(store.id))
+    .map(store => ({
+      storeId: store.id,
+      areaId: catalog.areas.find(area =>
+        area.storeId === store.id && area.name.trim() === selectedAreaName)?.id ?? null
+    }));
   function selectEveryStore() {
-    if (pending || targetsLocked) return;
-    setTargetAreas(previous => {
-      const next = { ...previous };
-      let count = Object.values(next).reduce((n, ids) => n + ids.length, 0);
-      for (const store of catalog.stores) {
-        if (count >= 20) break;
-        if (Array.isArray(next[store.id]) && next[store.id].length) continue;
-        next[store.id] = [catalog.areas.find(area => area.storeId === store.id)?.id ?? null];
-        count++;
-      }
-      return next;
-    });
+    if (pending || targetsLocked || !selectedAreaName) return;
+    setSelectedStoreIds(catalog.stores.slice(0, 20).map(store => store.id));
   }
   async function save() {
-    if (!name.trim() || (!machine && !destinationSelections.length) ||
+    if (!name.trim() || (!machine && (!selectedAreaName || !destinationSelections.length)) ||
       (machine && !catalog.areas.some(area => area.id === areaId)) ||
       (!machine && destinationSelections.some(destination =>
         destination.areaId !== null &&
@@ -910,7 +880,8 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
           })));
         }
         const result = await send('/api/admin/machines', 'POST', {
-          name: name.trim(), storeSelections: destinationSelections, ...initial
+          name: name.trim(), areaName: selectedAreaName,
+          storeSelections: destinationSelections, ...initial
         });
         if (!Array.isArray(result.ids) || result.ids.length !== destinationSelections.length ||
           !Array.isArray(result.areaIds) || result.areaIds.length !== destinationSelections.length) {
@@ -971,7 +942,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       setThumbnailRemoved(false);
       const firstId = destinations[0].id;
       notify(machine ? 'マシンの情報を保存しました。' :
-        destinations.length + '件の取扱説明書を登録しました。');
+        destinations.length + '店舗に取扱説明書を登録しました。');
       onSaved(firstId);
     } catch (e) {
       notify(`${e.message}（登録が一部完了している場合があります）`, true);
@@ -986,47 +957,49 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       <Field title="店舗"><select className={fieldInput} value={storeId} onChange={e => onStoreChange(e.target.value)} disabled={pending}>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
       <Field title="エリア"><select className={fieldInput} value={areaId} onChange={e => setAreaId(e.target.value)} disabled={pending}>{shownAreas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
     </> : <div className="manual-multistore">
-      <div className="manual-multistore-heading">
-        <div className="field-label">登録する店舗（複数選択可）</div>
+      <Field title="① エリアを選択（1つ）">
+        <select className={fieldInput} value={selectedAreaName}
+          disabled={pending || targetsLocked}
+          onChange={event => {
+            setSelectedAreaName(event.target.value);
+            setSelectedStoreIds([]);
+          }}>
+          {!areaNames.length && <option value="">エリアを登録してください</option>}
+          {areaNames.map(areaName => <option key={areaName} value={areaName}>{areaName}</option>)}
+        </select>
+      </Field>
+      {!areaNames.length && <p className="manual-multistore-note">
+        先に「エリア」タブから、登録するエリアを作成してください。
+      </p>}
+      <div className="manual-multistore-heading manual-multistore-store-heading">
+        <div className="field-label">② 店舗を選択（複数選択可）</div>
         <button type="button" className="manual-multistore-select-all"
-          disabled={pending || targetsLocked || !catalog.stores.length}
+          disabled={pending || targetsLocked || !selectedAreaName || !catalog.stores.length}
           onClick={selectEveryStore}>すべて選択</button>
         <button type="button" className="manual-multistore-clear"
-          disabled={pending || targetsLocked || !destinationSelections.length}
-          onClick={() => setTargetAreas({})}>選択解除</button>
+          disabled={pending || targetsLocked || !selectedStoreIds.length}
+          onClick={() => setSelectedStoreIds([])}>選択解除</button>
       </div>
       <div className="manual-multistore-list">
         {catalog.stores.map(store => {
-          const storeAreas = catalog.areas.filter(area => area.storeId === store.id);
-          const selectedAreaIds = targetAreas[store.id] || [];
-          const selected = selectedAreaIds.length > 0;
-          return <div className="manual-multistore-row" key={store.id}>
-            <label className="manual-multistore-checkbox">
-              <input type="checkbox" checked={selected}
-                disabled={pending || targetsLocked ||
-                  (!selected && destinationSelections.length >= 20)}
-                onChange={event => toggleDestination(store, event.target.checked)}/>
-              <span>{store.name}</span>
-              <span className="manual-multistore-hint">
-                {storeAreas.length ? selected && selectedAreaIds.length + 'エリア選択中' : 'エリア自動作成'}
-              </span>
-            </label>
-            {selected && (storeAreas.length
-              ? <div className="manual-multistore-areas" role="group" aria-label={store.name + 'の配置エリア'}>
-                  <div className="manual-multistore-area-heading">登録するエリア（複数選択可）</div>
-                  {storeAreas.map(area => <label className="manual-multistore-area-choice" key={area.id}>
-                    <input type="checkbox" checked={selectedAreaIds.includes(area.id)}
-                      disabled={pending || targetsLocked ||
-                        (!selectedAreaIds.includes(area.id) && destinationSelections.length >= 20)}
-                      onChange={event => toggleArea(store.id, area.id, event.target.checked)}/>
-                    <span>{area.name}</span>
-                  </label>)}
-                </div>
-              : <p className="manual-multistore-area-note">登録時に「マシン」エリアを自動作成します。</p>)}
-          </div>;
+          const selected = selectedStoreIds.includes(store.id);
+          const matchingArea = catalog.areas.find(area =>
+            area.storeId === store.id && area.name.trim() === selectedAreaName);
+          return <label className="manual-multistore-row manual-multistore-checkbox" key={store.id}>
+            <input type="checkbox" checked={selected}
+              disabled={pending || targetsLocked || !selectedAreaName ||
+                (!selected && selectedStoreIds.length >= 20)}
+              onChange={event => toggleDestination(store.id, event.target.checked)}/>
+            <span>{store.name}</span>
+            {!matchingArea && selectedAreaName &&
+              <span className="manual-multistore-hint">エリア自動作成</span>}
+          </label>;
         })}
       </div>
-      <p className="manual-multistore-note">選択中：{destinationStoreCount}店舗・{destinationSelections.length}エリア（登録先は最大20件）。選んだ各エリアに同じ取扱説明書を登録します。エリアがない店舗では「マシン」エリアを自動作成します。</p>
+      <p className="manual-multistore-note">
+        選択中：{destinationSelections.length}店舗・エリア「{selectedAreaName || '未選択'}」。
+        各店舗の同じエリアに登録します。エリア未登録の店舗には、選択したエリアを自動作成します（最大20店舗）。
+      </p>
     </div>}<Field title="マシン名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：チェストプレス"/></Field>
     <div className="divider-line"/>
     {CONTENT_FIELDS.map(([key, title], i) => key === 'overview'
@@ -1075,7 +1048,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
               }}>画像を削除</button>}
         </div>
       </div>
-    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'マシン情報を更新' : destinationSelections.length > 1 ? destinationSelections.length + 'エリアに取説を登録' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}
+    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'マシン情報を更新' : destinationSelections.length > 1 ? destinationSelections.length + '店舗に取説を登録' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}
     {cropRequest && <ManualImageCropper file={cropRequest.file} onApply={acceptCrop}
       square={cropRequest.kind === 'thumbnail'}
       onCancel={() => setCropRequest(null)}/>}
