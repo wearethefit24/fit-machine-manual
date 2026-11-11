@@ -759,14 +759,16 @@ function ManualItemsEditor({ title, field, value, onChange, onCrop, imagePreview
 }
 
 function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCancel, notify, tidy, inline = false }) {
-  const initialArea = catalog.areas.find(a => a.id === (machine?.areaId || initialAreaId)) || catalog.areas[0];
+  // A new registration always starts blank; only editing inherits a machine's area.
+  const initialArea = machine
+    ? catalog.areas.find(a => a.id === machine.areaId) || catalog.areas[0]
+    : null;
   const [storeId, setStoreId] = useState(initialArea?.storeId || '');
   const [areaId, setAreaId] = useState(initialArea?.id || '');
   // A machine belongs to one area category, regardless of how many stores carry it.
   const areaNames = [...new Set(catalog.areas.map(area => area.name.trim()).filter(Boolean))];
-  const [selectedAreaName, setSelectedAreaName] = useState(initialArea?.name.trim() || areaNames[0] || '');
-  const [selectedStoreIds, setSelectedStoreIds] = useState(() =>
-    initialArea?.storeId ? [initialArea.storeId] : []);
+  const [selectedAreaName, setSelectedAreaName] = useState('');
+  const [selectedStoreIds, setSelectedStoreIds] = useState([]);
   const createdTargetsRef = useRef(null);
   const [targetsLocked, setTargetsLocked] = useState(false);
   const [name, setName] = useState(machine?.name || '');
@@ -964,7 +966,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
             setSelectedAreaName(event.target.value);
             setSelectedStoreIds([]);
           }}>
-          {!areaNames.length && <option value="">エリアを登録してください</option>}
+          <option value="" disabled>{areaNames.length ? 'エリアを選択してください' : 'エリアを登録してください'}</option>
           {areaNames.map(areaName => <option key={areaName} value={areaName}>{areaName}</option>)}
         </select>
       </Field>
@@ -1099,7 +1101,7 @@ function MachinesAdmin({ catalog, refresh, notify, tidy }) {
   return <div className="space-y-4">
     {catalog.stores.length
       ? <MachineEditor key={'create-' + createKey} inline catalog={catalog}
-          initialAreaId={selectedArea?.id} refresh={refresh}
+          refresh={refresh}
           onSaved={() => setCreateKey(key => key + 1)}
           onCancel={() => {}} notify={notify} tidy={tidy}/>
       : <div className="admin-card">
