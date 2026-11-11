@@ -4,6 +4,8 @@ const SESSION_SECONDS = 12 * 60 * 60;
 const LOGO_KEY = 'site:logo';
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 const MAX_MANUAL_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_THUMBNAIL_BYTES = 2 * 1024 * 1024;
+const THUMBNAIL_KEY = machineId => 'machine-thumb:' + machineId;
 const MANUAL_IMAGE_PREFIX = '@FIT_IMG_V1:';
 
 // Only raster images are accepted, checked against actual bytes (not an untrusted MIME header).
@@ -145,7 +147,9 @@ async function drainCleanup(env) {
     for (let n = job.next_index; n < job.next_index + count; n++) {
       const key = job.video_id.startsWith('image:')
         ? 'manual:' + job.video_id.slice(6)
-        : `video:${job.video_id}:${n}`;
+        : job.video_id.startsWith('thumb:')
+          ? THUMBNAIL_KEY(job.video_id.slice(6))
+          : `video:${job.video_id}:${n}`;
       await env.VIDEO_KV.delete(key);
     }
     const next = job.next_index + count;
@@ -169,7 +173,12 @@ async function deletingImages(db, scope, id) {
   else if (scope === 'area') sql = 'SELECT id,adjustment,instructions FROM machines WHERE area_id=?';
   else sql = 'SELECT id,adjustment,instructions FROM machines WHERE id=?';
   const rows = (await db.prepare(sql).bind(id).all()).results;
-  return rows.flatMap(imageJobs);
+  // Thumbnail KV keys do not need a new D1 column, but must be queued for
+  // deletion whenever a store, area or machine is removed.
+  return rows.flatMap(machine => [
+    ...imageJobs(machine),
+    { id: 'thumb:' + machine.id, chunk_count: 1 }
+  ]);
 }
 async function serveManualImage(req, env, machineId, imageId) {
   if (!validId(machineId) || !validId(imageId)) return fail('画像がありません。', 404);
@@ -179,6 +188,22 @@ async function serveManualImage(req, env, machineId, imageId) {
   if (!data) return fail('画像がありません。', 404);
   return new Response(req.method === 'HEAD' ? null : data, {
     status: 200, headers: {
+      'content-type': 'image/jpeg',
+      'cache-control': 'no-store, max-age=0',
+      'x-content-type-options': 'nosniff'
+    }
+  });
+}
+async function serveMachineThumbnail(req, env, machineId) {
+  if (!validId(machineId)) return fail('画像がありません。', 404);
+  const machine = await env.DB.prepare('SELECT id FROM machines WHERE id=?')
+    .bind(machineId).first();
+  if (!machine) return fail('画像がありません。', 404);
+  const data = await env.VIDEO_KV.get(THUMBNAIL_KEY(machineId), 'arrayBuffer');
+  if (!data) return fail('画像がありません。', 404);
+  return new Response(req.method === 'HEAD' ? null : data, {
+    status: 200,
+    headers: {
       'content-type': 'image/jpeg',
       'cache-control': 'no-store, max-age=0',
       'x-content-type-options': 'nosniff'
@@ -343,6 +368,23 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
       return json({ ok: true, id: ids[0], ids, areaIds }, 201);
     }
     if (!validId(id)) return fail('マシンIDが不正です。');
+    if (action === 'thumbnail' && !index && (method === 'PUT' || method === 'DELETE')) {
+      const machine = await db.prepare('SELECT id FROM machines WHERE id=?').bind(id).first();
+      if (!machine) return fail('マシンがありません。', 404);
+      if (method === 'DELETE') {
+        await env.VIDEO_KV.delete(THUMBNAIL_KEY(id));
+        return json({ ok: true });
+      }
+      if (Number(req.headers.get('content-length') || 0) > MAX_THUMBNAIL_BYTES)
+        return fail('画像は2MiB以内にしてください。', 413);
+      const data = await req.arrayBuffer();
+      if (!data.byteLength || data.byteLength > MAX_THUMBNAIL_BYTES)
+        return fail('画像は2MiB以内にしてください。', 413);
+      if (logoMime(data) !== 'image/jpeg')
+        return fail('正方形に切り取り済みのJPEG画像を選択してください。');
+      await env.VIDEO_KV.put(THUMBNAIL_KEY(id), data);
+      return json({ ok: true });
+    }
     if (action === 'images' && validId(index) && method === 'PUT') {
       const machine = await db.prepare('SELECT id FROM machines WHERE id=?').bind(id).first();
       if (!machine) return fail('マシンがありません。', 404);
@@ -388,6 +430,8 @@ export async function handleApi(context) {
     if ((req.method === 'GET' || req.method === 'HEAD') && path.length === 2 && path[1] === 'logo') return serveLogo(req, env);
     if ((req.method === 'GET' || req.method === 'HEAD') && path[1] === 'manual-image' && path.length === 4)
       return serveManualImage(req, env, path[2], path[3]);
+    if ((req.method === 'GET' || req.method === 'HEAD') && path[1] === 'machine-thumbnail' && path.length === 3)
+      return serveMachineThumbnail(req, env, path[2]);
     if (path[1] === 'admin') {
       if (!['GET', 'POST', 'PATCH', 'DELETE', 'PUT'].includes(req.method)) return fail('メソッドが許可されていません。', 405);
       if (!['GET', 'HEAD'].includes(req.method)) {
