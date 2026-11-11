@@ -996,6 +996,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       notify('保存途中のため、店舗を変更せずに再度保存してください。', true);
       return;
     }
+    let saveStage = '共通のマシン情報の保存';
     try {
       setPending(true);
       setProgress('共通のマシン情報を保存しています…');
@@ -1034,6 +1035,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       const photos=[...uploadedPhotoIds];
       for(let i=0;i<photos.length;i++){
         const imageId=photos[i];
+        saveStage = '説明画像の保存';
         setProgress('共通画像を保存しています… '+(i+1)+' / '+photos.length);
         await api('/api/admin/manual-groups/'+first.groupId+'/images/'+imageId,{
           method:'PUT',headers:{'content-type':'image/jpeg'},
@@ -1041,12 +1043,14 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
         });
       }
       if(photos.length) {
+        saveStage = '取扱説明書の更新';
         setProgress('取扱説明書を更新しています…');
         await send('/api/admin/manual-groups','POST',{
           ...data,groupId:first.groupId,seedMachineId:undefined,...fields
         });
       }
       if(thumbnailBlob){
+        saveStage = '選択画面用画像の保存';
         setProgress('選択画面の画像を保存しています…');
         await api('/api/admin/manual-groups/'+first.groupId+'/thumbnail',{
           method:'PUT',headers:{'content-type':'image/jpeg'},body:thumbnailBlob
@@ -1054,8 +1058,11 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       } else if(thumbnailRemoved && machine) {
         await api('/api/admin/manual-groups/'+first.groupId+'/thumbnail',{method:'DELETE'});
       }
+      // The manual has already been saved successfully. Background cleanup
+      // is best effort: its failure must not be shown as a failed save.
       await refresh();
-      await tidy();
+      try { await tidy(); }
+      catch(error) { console.warn('Post-save cleanup deferred:',error?.message); }
       const oldPreviews=imagePreviewsRef.current;
       imagePreviewsRef.current={};
       setImagePreviews({});
@@ -1069,7 +1076,8 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
         destinationSelections.length+'店舗に共通マシンを登録しました。');
       onSaved(first.ids[0]);
     } catch(error) {
-      notify(error.message+'（保存状況を登録済み一覧でご確認ください）',true);
+      notify(saveStage+'でエラーが発生しました：'+error.message+
+        '（再登録せず登録済み一覧をご確認ください）',true);
       await refresh();
     } finally {
       setPending(false);
