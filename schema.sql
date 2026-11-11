@@ -84,3 +84,12 @@ CREATE TABLE IF NOT EXISTS machine_manual_members (
   group_id TEXT NOT NULL REFERENCES machine_manual_groups(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_machine_manual_members_group ON machine_manual_members(group_id);
+
+-- Publication state. A row is stored only when a record is explicitly hidden.
+-- The table is also created on demand by the admin visibility API for existing D1 installations.
+CREATE TABLE IF NOT EXISTS visibility_settings (
+  entity_type TEXT NOT NULL CHECK(entity_type IN ('store','area','machine','group')),
+  entity_id TEXT NOT NULL,
+  is_public INTEGER NOT NULL DEFAULT 1 CHECK(is_public IN (0,1)),
+  PRIMARY KEY (entity_type,entity_id)
+);
