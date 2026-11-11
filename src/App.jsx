@@ -652,6 +652,11 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   const initialArea = catalog.areas.find(a => a.id === (machine?.areaId || initialAreaId)) || catalog.areas[0];
   const [storeId, setStoreId] = useState(initialArea?.storeId || '');
   const [areaId, setAreaId] = useState(initialArea?.id || '');
+  // A new manual may be published to several stores, with one destination area per store.
+  const [targetAreas, setTargetAreas] = useState(() =>
+    initialArea ? { [initialArea.storeId]: initialArea.id } : {});
+  const createdTargetsRef = useRef(null);
+  const [targetsLocked, setTargetsLocked] = useState(false);
   const [name, setName] = useState(machine?.name || '');
   const [fields, setFields] = useState(Object.fromEntries(Object.keys(initialFields).map(k => [k, machine?.[k] || ''])));
   const [pending, setPending] = useState(false);
@@ -687,51 +692,139 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   }
   const shownAreas = catalog.areas.filter(a => a.storeId === storeId);
   function onStoreChange(id) { setStoreId(id); setAreaId(catalog.areas.find(a => a.storeId === id)?.id || ''); }
+  function toggleDestination(store, selected) {
+    if (targetsLocked) return;
+    setTargetAreas(previous => {
+      const next = { ...previous };
+      if (!selected) { delete next[store.id]; return next; }
+      const defaultArea = catalog.areas.find(area => area.storeId === store.id);
+      if (defaultArea) next[store.id] = defaultArea.id;
+      return next;
+    });
+  }
+  const destinationAreaIds = machine
+    ? [areaId]
+    : catalog.stores.filter(store => targetAreas[store.id]).map(store => targetAreas[store.id]);
   async function save() {
-    if (!name.trim() || !areaId) { notify('マシン名とエリアを入力してください。', true); return; }
+    if (!name.trim() || !destinationAreaIds.length ||
+      destinationAreaIds.some(destination =>
+        !catalog.areas.some(area => area.id === destination))) {
+      notify('マシン名と登録先の店舗・エリアを指定してください。', true);
+      return;
+    }
+    if (!machine && destinationAreaIds.length > 20) {
+      notify('登録先は20店舗以内にしてください。', true);
+      return;
+    }
+    if (createdTargetsRef.current &&
+      (createdTargetsRef.current.length !== destinationAreaIds.length ||
+       createdTargetsRef.current.some((record, index) => record.areaId !== destinationAreaIds[index]))) {
+      notify('登録途中のため、対象店舗を変更せずに再度保存してください。', true);
+      return;
+    }
     try {
-      setPending(true); setProgress('マシン情報を保存しています…');
-      let id = workingMachineId.current;
+      setPending(true);
+      setProgress('マシン情報を保存しています…');
       let newlyCreated = false;
-      if (!id) {
-        // Create the machine before uploading photos, without exposing unuploaded image IDs.
+      if (!machine && !createdTargetsRef.current) {
+        // The original text is stored before uploading images, so readers never see
+        // image references whose KV objects have not been uploaded yet.
         const initial = { ...fields };
         for (const field of ['adjustment', 'instructions']) {
           initial[field] = writeManualItems(readManualItems(fields[field]).map(item => ({
             ...item, imageId: imagePreviews[item.imageId] ? null : item.imageId
           })));
         }
-        const result = await send('/api/admin/machines', 'POST', { name: name.trim(), areaId, ...initial });
-        id = result.id;
-        workingMachineId.current = id;
+        const result = await send('/api/admin/machines', 'POST', {
+          name: name.trim(), areaIds: destinationAreaIds, ...initial
+        });
+        if (!Array.isArray(result.ids) || result.ids.length !== destinationAreaIds.length) {
+          throw new Error('登録結果の件数が一致しません。管理画面で登録先を確認してください。');
+        }
+        createdTargetsRef.current = result.ids.map((id, index) => ({
+          id, areaId: destinationAreaIds[index]
+        }));
+        workingMachineId.current = result.ids[0];
+        setTargetsLocked(true);
         newlyCreated = true;
       }
+      const destinations = machine
+        ? [{ id: machine.id, areaId }]
+        : createdTargetsRef.current;
       const referenced = new Set(['adjustment', 'instructions'].flatMap(field =>
         readManualItems(fields[field]).map(item => item.imageId).filter(Boolean)));
-      const uploads = [...referenced].filter(imageId => imagePreviews[imageId]);
-      for (let index = 0; index < uploads.length; index++) {
-        const imageId = uploads[index];
-        setProgress('手順画像を保存しています… ' + (index + 1) + ' / ' + uploads.length);
-        await api(`/api/admin/machines/${id}/images/${imageId}`, {
-          method: 'PUT', headers: { 'content-type': 'image/jpeg' },
-          body: imagePreviews[imageId].blob
-        });
+      const photos = [...referenced].filter(imageId => imagePreviews[imageId]);
+
+      for (let targetIndex = 0; targetIndex < destinations.length; targetIndex++) {
+        const target = destinations[targetIndex];
+        for (let imageIndex = 0; imageIndex < photos.length; imageIndex++) {
+          const imageId = photos[imageIndex];
+          setProgress('画像を保存しています（店舗 ' + (targetIndex + 1) + ' / ' +
+            destinations.length + '、画像 ' + (imageIndex + 1) + ' / ' + photos.length + '）');
+          await api(`/api/admin/machines/${target.id}/images/${imageId}`, {
+            method: 'PUT', headers: { 'content-type': 'image/jpeg' },
+            body: imagePreviews[imageId].blob
+          });
+        }
+        if (!newlyCreated || photos.length) {
+          setProgress('取扱説明書を登録しています… ' + (targetIndex + 1) + ' / ' + destinations.length);
+          await send(`/api/admin/machines/${target.id}`, 'PATCH', {
+            name: name.trim(), areaId: target.areaId, ...fields
+          });
+        }
       }
-      if (!newlyCreated || uploads.length) {
-        setProgress('説明文と画像を保存しています…');
-        await send(`/api/admin/machines/${id}`, 'PATCH', { name: name.trim(), areaId, ...fields });
-      }
-      await refresh(); await tidy();
+      await refresh();
+      await tidy();
       const previewsToRevoke = imagePreviewsRef.current;
       imagePreviewsRef.current = {};
       setImagePreviews({});
       Object.values(previewsToRevoke).forEach(photo => URL.revokeObjectURL(photo.url));
-      notify('マシンの情報を保存しました。'); onSaved(id);
-    } catch (e) { notify(`${e.message}（情報だけ保存されている場合があります）`, true); await refresh(); }
-    finally { setPending(false); setProgress(''); }
+      const firstId = destinations[0].id;
+      notify(machine ? 'マシンの情報を保存しました。' :
+        destinations.length + '店舗に取扱説明書を登録しました。');
+      onSaved(firstId);
+    } catch (e) {
+      notify(`${e.message}（登録が一部完了している場合があります）`, true);
+      await refresh();
+    } finally {
+      setPending(false);
+      setProgress('');
+    }
   }
   return <div className="space-y-4"><div className="admin-card"><div className="flex justify-between items-center mb-5"><h3 className="card-title !mb-0">{machine ? 'マシンを編集' : '新しいマシンを登録'}</h3><button onClick={onCancel} className="icon-button"><X size={19}/></button></div>
-    <div className="space-y-4"><Field title="店舗"><select className={fieldInput} value={storeId} onChange={e => onStoreChange(e.target.value)}>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field><Field title="エリア"><select className={fieldInput} value={areaId} onChange={e => setAreaId(e.target.value)}>{shownAreas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field><Field title="マシン名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：チェストプレス"/></Field>
+    <div className="space-y-4">{machine ? <>
+      <Field title="店舗"><select className={fieldInput} value={storeId} onChange={e => onStoreChange(e.target.value)} disabled={pending}>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
+      <Field title="エリア"><select className={fieldInput} value={areaId} onChange={e => setAreaId(e.target.value)} disabled={pending}>{shownAreas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
+    </> : <div className="manual-multistore">
+      <div className="field-label">登録する店舗（複数選択可）</div>
+      <div className="manual-multistore-list">
+        {catalog.stores.map(store => {
+          const storeAreas = catalog.areas.filter(area => area.storeId === store.id);
+          const selected = Boolean(targetAreas[store.id]);
+          return <div className="manual-multistore-row" key={store.id}>
+            <label className="manual-multistore-checkbox">
+              <input type="checkbox" checked={selected}
+                disabled={!storeAreas.length || pending || targetsLocked}
+                onChange={event => toggleDestination(store, event.target.checked)}/>
+              <span>{store.name}</span>
+              {!storeAreas.length && <span className="manual-multistore-hint">エリア未登録</span>}
+            </label>
+            {selected && <label className="manual-multistore-area">
+              <span>配置エリア</span>
+              <select className={fieldInput} aria-label={store.name + 'の配置エリア'}
+                value={targetAreas[store.id]}
+                disabled={pending || targetsLocked}
+                onChange={event => setTargetAreas(previous => ({
+                  ...previous, [store.id]: event.target.value
+                }))}>
+                {storeAreas.map(area => <option key={area.id} value={area.id}>{area.name}</option>)}
+              </select>
+            </label>}
+          </div>;
+        })}
+      </div>
+      <p className="manual-multistore-note">選択中：{destinationAreaIds.length}店舗。各店舗に同じ内容の取扱説明書を登録します。登録後は店舗ごとに編集できます。</p>
+    </div>}<Field title="マシン名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：チェストプレス"/></Field>
     <div className="divider-line"/>
     {CONTENT_FIELDS.map(([key, title], i) => key === 'overview'
       ? <Field key={key} title={`${num(i + 1)} ${title}`}><textarea className={`${fieldInput} textarea`} rows={3} value={fields[key]} onChange={e => setFields(prev => ({ ...prev, [key]: e.target.value }))} maxLength={15000} placeholder={`${title}を入力してください`}/></Field>
