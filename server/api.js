@@ -313,8 +313,9 @@ async function pruneEmptyManualGroups(db,groupIds) {
     await db.prepare('DELETE FROM machine_manual_groups WHERE id=?').bind(groupId).run();
   }
 }
-async function serveManualImage(req, env, machineId, imageId) {
+async function serveManualImage(req, env, machineId, imageId, admin = false) {
   if (!validId(machineId) || !validId(imageId)) return fail('画像がありません。', 404);
+  if (!admin && !(await isMachinePublic(env.DB,machineId))) return fail('画像がありません。', 404);
   const machine = await env.DB.prepare('SELECT adjustment,instructions FROM machines WHERE id=?').bind(machineId).first();
   if(!machine) return fail('画像がありません。',404);
   const group = await groupForMachine(env.DB,machineId);
@@ -340,8 +341,9 @@ async function serveManualImage(req, env, machineId, imageId) {
     }
   });
 }
-async function serveMachineThumbnail(req, env, machineId) {
+async function serveMachineThumbnail(req, env, machineId, admin = false) {
   if (!validId(machineId)) return fail('画像がありません。', 404);
+  if (!admin && !(await isMachinePublic(env.DB,machineId))) return fail('画像がありません。', 404);
   const machine = await env.DB.prepare('SELECT id FROM machines WHERE id=?')
     .bind(machineId).first();
   if (!machine) return fail('画像がありません。', 404);
@@ -374,6 +376,35 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
   if (!(await sessionValid(req, env))) return fail('管理者認証が必要です。', 401);
   if (parts[0] === 'session' && method === 'GET') return json({ ok: true });
   if (parts[0] === 'maintenance' && method === 'POST') return json(await drainCleanup(env));
+  if (parts[0] === 'catalog' && method === 'GET') return json(await catalog(env.DB,{admin:true}));
+  if (parts[0] === 'manual-image' && parts.length===3 && (method==='GET' || method==='HEAD'))
+    return serveManualImage(req,env,parts[1],parts[2],true);
+  if (parts[0] === 'machine-thumbnail' && parts.length===2 && (method==='GET' || method==='HEAD'))
+    return serveMachineThumbnail(req,env,parts[1],true);
+  if (parts[0] === 'visibility' && method === 'POST') {
+    const d=await body(req);
+    const entityType=d.entityType;
+    const ids=d.ids;
+    if (!['store','area','machine','group'].includes(entityType) ||
+        typeof d.isPublic!=='boolean' || !Array.isArray(ids) ||
+        ids.length<1 || ids.length>100 || ids.some(id=>!validId(id)) ||
+        new Set(ids).size!==ids.length)
+      return fail('公開設定の対象が不正です。');
+    const table={store:'stores',area:'areas',machine:'machines',group:'machine_manual_groups'}[entityType];
+    const found=(await env.DB.prepare(`SELECT id FROM ${table} WHERE id IN (${ids.map(()=>'?').join(',')})`)
+      .bind(...ids).all()).results;
+    if(found.length!==ids.length) return fail('公開設定の対象が見つかりません。',404);
+    await ensureVisibilityTable(env.DB);
+    await env.DB.batch(ids.map(id=>d.isPublic
+      ? env.DB.prepare('DELETE FROM visibility_settings WHERE entity_type=? AND entity_id=?')
+        .bind(entityType,id)
+      : env.DB.prepare(`INSERT INTO visibility_settings(entity_type,entity_id,is_public)
+          VALUES(?,?,0) ON CONFLICT(entity_type,entity_id)
+          DO UPDATE SET is_public=0`).bind(entityType,id)
+    ));
+    return json({ok:true,entityType,ids,isPublic:d.isPublic});
+  }
+
   if (parts[0] === 'logo') {
     if (method === 'PUT') {
       if (Number(req.headers.get('content-length') || 0) > MAX_LOGO_BYTES) return fail('画像は2MiB以内にしてください。', 413);
