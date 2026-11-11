@@ -184,6 +184,30 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   outline-offset: -2px;
 }
 .site-header-public-link:active { opacity: .7; }
+/* Icon-only QR scanner in the public header. Same touch target as the
+   admin smartphone link, without a button background or an extra footer. */
+.site-header-qr-scan {
+  position: absolute;
+  right: max(12px, env(safe-area-inset-right, 0px));
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  bottom: 6px;
+  width: 44px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2;
+  border: 0;
+  padding: 0;
+  color: #fff;
+  background: transparent;
+  border-radius: 8px;
+  -webkit-tap-highlight-color: transparent;
+}
+.site-header-qr-scan:focus-visible {
+  outline: 2px solid #22c55e;
+  outline-offset: -2px;
+}
+.site-header-qr-scan:active { opacity: .7; }
 .site-logo-box {
   /* Keep the original 150×48 logo perfectly centered in the viewport,
      independent of the admin label placed on the left. The vertical center
@@ -235,17 +259,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .viewer-store-button:hover { background: #ebebeb; }
 .viewer-store-button:focus-visible { outline: 2px solid #fff; outline-offset: 5px; }
 
-.qr-scan-launcher {
-  position: fixed; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); left: 50%;
-  transform: translateX(-50%);
-  width: 86px; height: 86px; border-radius: 999px;
-  background: #fff; color: #000; border: 2px solid #fff;
-  display: flex; align-items: center; justify-content: center;
-  z-index: 40; box-shadow: 0 8px 30px rgba(0,0,0,.75);
-}
-.qr-scan-launcher:active { background: #dedede; transform: translateX(-50%) scale(.95); }
-.qr-scan-launcher:focus-visible { outline: 2px solid #fff; outline-offset: 5px; }
-
 .qr-scanner-overlay {
   position: fixed; inset: 0; z-index: 80;
   background: #000; color: #fff;
@@ -286,7 +299,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .viewer-home-title { font-size: 20px; }
   .viewer-home-buttons { gap: 24px; width: min(85vw, 305px); }
   .viewer-store-button { min-height: 95px; font-size: 31px; }
-  .qr-scan-launcher { width: 78px; height: 78px; }
 }
 
 /* Area and machine selection layouts */
@@ -612,16 +624,6 @@ button, a { touch-action: manipulation; }
   line-height: 1.45;
   letter-spacing: .01em;
 }
-.qr-scan-launcher {
-  width: 84px;
-  height: 84px;
-  border: 1px solid #fff;
-  box-shadow: 0 9px 30px rgba(0,0,0,.72), 0 0 0 4px rgba(255,255,255,.07);
-  transition: background-color .15s ease, box-shadow .15s ease, transform .15s ease;
-}
-.qr-scan-launcher:hover { background: #ededed; }
-.qr-scan-launcher:focus-visible { outline: 2px solid #fff; outline-offset: 6px; }
-
 /* Instruction manual: typographic hierarchy and easy-to-scan steps */
 .manual-page { padding-top: 22px; }
 .manual-title-area { margin-bottom: 25px; }
@@ -732,7 +734,7 @@ button, a { touch-action: manipulation; }
 
 /* Clear keyboard focus and respect reduced-motion settings */
 @media (prefers-reduced-motion: reduce) {
-  .viewer-store-button, .viewer-machine-placeholder, .qr-scan-launcher, .field, .btn, .chip {
+  .viewer-store-button, .viewer-machine-placeholder, .field, .btn, .chip {
     transition: none;
   }
 }
@@ -1616,11 +1618,6 @@ html, body {
 .swipe-back-host.is-swipe-dragging .swipe-back-current,
 .swipe-back-host.is-swipe-settling .swipe-back-current {
   z-index: 1;
-}
-.swipe-back-host.is-swipe-dragging .qr-scan-launcher,
-.swipe-back-host.is-swipe-settling .qr-scan-launcher {
-  opacity: 0;
-  pointer-events: none;
 }
 .swipe-back-behind {
   position: fixed;
