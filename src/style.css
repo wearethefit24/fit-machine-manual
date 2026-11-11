@@ -1708,7 +1708,7 @@ html, body {
 .swipe-back-current .viewer-machine-grid,
 .swipe-back-current .manual-title-area,
 .swipe-back-current .manual-guide-sections {
-  animation: viewer-content-enter 3000ms cubic-bezier(.2,.8,.2,1) both;
+  animation: viewer-content-enter 2500ms cubic-bezier(.2,.8,.2,1) both;
 }
 @media (prefers-reduced-motion: reduce) {
   .swipe-back-current .viewer-home-buttons,
