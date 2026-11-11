@@ -986,7 +986,7 @@ button, a { touch-action: manipulation; }
   font-size: clamp(21px,5.8vw,25px);
 }
 .manual-exercise-panel .manual-exercise-part-tips .manual-guide-title {
-  color: #ffeba7;
+  color: #FFEE1D;
   font-size: clamp(18px,5vw,21px);
 }
 .manual-exercise-panel .manual-steps {
