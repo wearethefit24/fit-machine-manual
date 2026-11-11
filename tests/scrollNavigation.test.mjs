@@ -27,3 +27,17 @@ test('scroll style is restored after a browser scroll exception',()=>{
   assert.throws(()=>resetPageScroll({scrollTo:()=>{throw Error('not supported')}},doc));
   assert.equal(doc.documentElement.style.scrollBehavior,'smooth');
 });
+
+test('legacy iPhone scrollTo numeric fallback still jumps to the top',()=>{
+  const calls=[];
+  const doc={documentElement:{style:{scrollBehavior:'smooth'}},
+    scrollingElement:{scrollTop:200},body:{scrollTop:200}};
+  const win={scrollTo:(a,b)=>{
+    if(typeof a==='object')throw new TypeError('unsupported options');
+    calls.push([a,b]);
+  }};
+  resetPageScroll(win,doc);
+  assert.deepEqual(calls,[[0,0]]);
+  assert.equal(doc.scrollingElement.scrollTop,0);
+  assert.equal(doc.documentElement.style.scrollBehavior,'smooth');
+});
