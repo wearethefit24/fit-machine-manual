@@ -353,17 +353,21 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
         .bind(...storeIds).all()).results;
       if (stores.length !== storeIds.length) return fail('選択した店舗が見つかりません。',404);
       let groupId = d.groupId || null;
+      let originalMachineName = d.name.trim();
       let current = [];
       if (groupId) {
         if (!validId(groupId)) return fail('取扱説明書IDが不正です。');
         const exists = await db.prepare('SELECT id FROM machine_manual_groups WHERE id=?').bind(groupId).first();
         if (!exists) return fail('取扱説明書が見つかりません。',404);
+        originalMachineName = (await db.prepare('SELECT name FROM machine_manual_groups WHERE id=?')
+          .bind(groupId).first())?.name || originalMachineName;
         current = await groupMachines(db,groupId);
       } else if (d.seedMachineId != null) {
         if (!validId(d.seedMachineId)) return fail('編集するマシンが不正です。');
         const base = await db.prepare(`SELECT m.*,a.name AS areaName,a.store_id AS storeId
           FROM machines m JOIN areas a ON m.area_id=a.id WHERE m.id=?`).bind(d.seedMachineId).first();
         if (!base) return fail('編集するマシンが見つかりません。',404);
+        originalMachineName = base.name;
         const linked = await groupForMachine(db,d.seedMachineId);
         if (linked) {
           groupId = linked.id;
@@ -402,9 +406,27 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
         .map(storeId=>({storeId,areaId:crypto.randomUUID()}));
       for(const area of generatedAreas) matchingMap.set(area.storeId,area.areaId);
       const currentByStore = new Map(current.map(item=>[item.storeId,item]));
+      const reusableByStore = new Map();
+      // Explicitly selecting another store while editing can link its existing
+      // standalone copy rather than creating a duplicate and breaking its QR.
+      if(d.groupId || d.seedMachineId) {
+        const options=(await db.prepare(`SELECT m.id,a.store_id AS storeId FROM machines m
+          JOIN areas a ON a.id=m.area_id
+          LEFT JOIN machine_manual_members mm ON mm.machine_id=m.id
+          WHERE mm.machine_id IS NULL AND m.name=? AND a.name=?
+          AND a.store_id IN (${storeIds.map(() => '?').join(',')})
+          ORDER BY m.created_at,m.id`)
+          .bind(originalMachineName,d.areaName.trim(),...storeIds).all()).results;
+        const byStore=new Map();
+        for(const row of options){
+          if(!byStore.has(row.storeId)) byStore.set(row.storeId,[]);
+          byStore.get(row.storeId).push(row.id);
+        }
+        for(const [storeId,ids] of byStore) if(ids.length===1) reusableByStore.set(storeId,ids[0]);
+      }
       const placements = storeIds.map(storeId=>({
         storeId,areaId:matchingMap.get(storeId),
-        machineId:currentByStore.get(storeId)?.id || crypto.randomUUID()
+        machineId:currentByStore.get(storeId)?.id || reusableByStore.get(storeId) || crypto.randomUUID()
       }));
       const keptIds = new Set(placements.map(item=>item.machineId));
       const removed = current.filter(item=>!keptIds.has(item.id));
@@ -429,7 +451,8 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
           VALUES(?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM areas WHERE store_id=?))`)
           .bind(area.areaId,area.storeId,d.areaName.trim(),area.storeId));
       for(const placement of placements){
-        if(currentByStore.get(placement.storeId)?.id===placement.machineId){
+        if(currentByStore.get(placement.storeId)?.id===placement.machineId ||
+           reusableByStore.get(placement.storeId)===placement.machineId){
           statements.push(db.prepare(`UPDATE machines SET area_id=?,updated_at=datetime('now') WHERE id=?`)
             .bind(placement.areaId,placement.machineId));
         } else {
