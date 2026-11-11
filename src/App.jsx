@@ -1529,7 +1529,19 @@ function SwipeBackViewer({ catalog, loading, error, route, navigate, refresh }) 
 }
 function Admin({ catalog, refresh, error, logoRevision, onLogoChanged }) {
   const [auth, setAuth] = useState('checking');
-  const [tab, setTab] = useState('machines');
+  // Remember the last admin section across reloads on this device.
+  const [tab, setTab] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem('fit-manual-admin-tab');
+      return ['stores','areas','machines','logo'].includes(saved) ? saved : 'machines';
+    } catch {
+      return 'machines';
+    }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem('fit-manual-admin-tab', tab); }
+    catch { /* Private browsing may block local storage. */ }
+  }, [tab]);
   const [notice, setNotice] = useState(null);
   useEffect(() => { api('/api/admin/session').then(() => setAuth('in')).catch(() => setAuth('out')); }, []);
   async function tidy() {
