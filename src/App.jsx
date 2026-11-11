@@ -804,7 +804,8 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
           return <div className="manual-multistore-row" key={store.id}>
             <label className="manual-multistore-checkbox">
               <input type="checkbox" checked={selected}
-                disabled={!storeAreas.length || pending || targetsLocked}
+                disabled={!storeAreas.length || pending || targetsLocked ||
+                  (!selected && destinationAreaIds.length >= 20)}
                 onChange={event => toggleDestination(store, event.target.checked)}/>
               <span>{store.name}</span>
               {!storeAreas.length && <span className="manual-multistore-hint">エリア未登録</span>}
@@ -823,7 +824,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
           </div>;
         })}
       </div>
-      <p className="manual-multistore-note">選択中：{destinationAreaIds.length}店舗。各店舗に同じ内容の取扱説明書を登録します。登録後は店舗ごとに編集できます。</p>
+      <p className="manual-multistore-note">選択中：{destinationAreaIds.length}店舗（最大20店舗）。各店舗に同じ内容の取扱説明書を登録します。登録後は店舗ごとに編集できます。</p>
     </div>}<Field title="マシン名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：チェストプレス"/></Field>
     <div className="divider-line"/>
     {CONTENT_FIELDS.map(([key, title], i) => key === 'overview'
@@ -831,7 +832,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       : <ManualItemsEditor key={key} title={`${num(i + 1)} ${title}`} field={key}
           value={fields[key]} onChange={value => setFields(prev => ({ ...prev, [key]: value }))}
           onCrop={beginCrop} imagePreviews={imagePreviews} machineId={workingMachineId.current}/>)}
-    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'マシン情報を更新' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}
+    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'マシン情報を更新' : destinationAreaIds.length > 1 ? destinationAreaIds.length + '店舗に取説を登録' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}
     {cropRequest && <ManualImageCropper file={cropRequest.file} onApply={acceptCrop}
       onCancel={() => setCropRequest(null)}/>}
   </div>;
