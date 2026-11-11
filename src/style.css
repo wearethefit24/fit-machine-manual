@@ -1215,3 +1215,66 @@ html, body {
   .manual-image-pick { padding: 8px; font-size: 11px; }
   .manual-crop-dialog { padding: 13px; }
 }
+
+/* Multi-store destinations for machine manual registration */
+.manual-multistore-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.manual-multistore-row {
+  border: 1px solid rgba(255,255,255,.3);
+  background: #151515;
+  border-radius: 12px;
+  padding: 12px 13px;
+}
+.manual-multistore-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  min-height: 26px;
+  cursor: pointer;
+}
+.manual-multistore-checkbox:has(input:disabled) {
+  opacity: .6;
+}
+.manual-multistore-checkbox input {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  accent-color: #fff;
+  cursor: pointer;
+}
+.manual-multistore-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: #b8b8b8;
+  font-weight: 400;
+}
+.manual-multistore-area {
+  display: block;
+  margin: 11px 0 0 30px;
+}
+.manual-multistore-area > span {
+  display: block;
+  font-size: 11px;
+  color: #d1d1d1;
+  margin-bottom: 6px;
+}
+.manual-multistore-area select {
+  width: 100%;
+}
+.manual-multistore-note {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #d1d1d1;
+}
+@media (max-width: 360px) {
+  .manual-multistore-row { padding: 11px; }
+  .manual-multistore-checkbox { gap: 8px; font-size: 13px; }
+  .manual-multistore-area { margin-left: 27px; }
+}
