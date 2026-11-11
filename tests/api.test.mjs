@@ -209,7 +209,7 @@ test('machine manuals can be created across multiple stores atomically', async (
     const areaB = (await (await fetchApi('/api/admin/areas','POST',{storeId:id,name:'フリー'})).json()).id;
     stores.push({id, areaA, areaB});
   }
-  const areaIds = [stores[0].areaB, stores[1].areaA, stores[2].areaB];
+  const areaIds = [stores[0].areaA, stores[1].areaA, stores[2].areaA];
   const values = {
     name:'チェストプレス',areaIds,overview:'胸を鍛える',
     adjustment:'シートを調整',instructions:'1. 構える',
@@ -243,6 +243,8 @@ test('machine manuals can be created across multiple stores atomically', async (
   // Invalid batches must not register any machines.
   const before = catalog.machines.length;
   for(const badIds of [
+    [stores[0].areaA, stores[0].areaB], // one store, two areas
+    [stores[0].areaA, stores[1].areaB], // different area categories
     [stores[0].areaB, stores[0].areaB], // duplicated area
     [stores[0].areaB, '123e4567-e89b-42d3-a456-426614174000'], // unknown area
     [], // empty destination list
