@@ -194,3 +194,98 @@ test('manual photo uploads require an admin session', async () => {
   const jpeg = Uint8Array.from([255,216,255,0]).buffer;
   assert.equal((await fetchApi('/api/admin/machines/'+machineId+'/images/'+imageId,'PUT',jpeg)).status, 401);
 });
+
+test('machine manuals can be created across multiple stores atomically', async () => {
+  const { env, fetchApi } = fixture();
+  const first = await fetchApi('/api/admin/machines', 'POST', {
+    name:'未認証',areaIds:['123e4567-e89b-42d3-a456-426614174000']
+  });
+  assert.equal(first.status, 401);
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const stores = [];
+  for (const name of ['江古田店', '大宮店', '池袋店']) {
+    const id = (await (await fetchApi('/api/admin/stores','POST',{name})).json()).id;
+    const areaA = (await (await fetchApi('/api/admin/areas','POST',{storeId:id,name:'ウェイト'})).json()).id;
+    const areaB = (await (await fetchApi('/api/admin/areas','POST',{storeId:id,name:'フリー'})).json()).id;
+    stores.push({id, areaA, areaB});
+  }
+  const areaIds = [stores[0].areaB, stores[1].areaA, stores[2].areaB];
+  const values = {
+    name:'チェストプレス',areaIds,overview:'胸を鍛える',
+    adjustment:'シートを調整',instructions:'1. 構える',
+    tips:'ゆっくり動かす',safety:'無理はしない'
+  };
+  let r = await fetchApi('/api/admin/machines','POST',values);
+  assert.equal(r.status, 201);
+  const created = await r.json();
+  assert.equal(created.ids.length,3);
+  assert.equal(created.id,created.ids[0]);
+  assert.deepEqual(created.areaIds,areaIds);
+  assert.equal(new Set(created.ids).size,3);
+  let catalog = await (await fetchApi('/api/catalog')).json();
+  for (let i=0; i<3; i++) {
+    const machine=catalog.machines.find(m=>m.id===created.ids[i]);
+    assert.equal(machine.areaId,areaIds[i]);
+    assert.equal(machine.name,values.name);
+    assert.equal(machine.adjustment,values.adjustment);
+    assert.equal(machine.instructions,values.instructions);
+  }
+
+  // Each store receives an independent manual that can be edited after creation.
+  r = await fetchApi('/api/admin/machines/'+created.ids[1],'PATCH',{
+    ...values,areaId:areaIds[1],instructions:'大宮店専用の説明'
+  });
+  assert.equal(r.status,200);
+  catalog = await (await fetchApi('/api/catalog')).json();
+  assert.equal(catalog.machines.find(m=>m.id===created.ids[1]).instructions,'大宮店専用の説明');
+  assert.equal(catalog.machines.find(m=>m.id===created.ids[0]).instructions,values.instructions);
+
+  // Invalid batches must not register any machines.
+  const before = catalog.machines.length;
+  for(const badIds of [
+    [stores[0].areaA,stores[0].areaB], // same store twice
+    [stores[0].areaB, stores[0].areaB], // duplicated area
+    [stores[0].areaB, '123e4567-e89b-42d3-a456-426614174000'], // unknown area
+    [], // empty destination list
+    [...Array(21)].map((_,i)=>'123e4567-e89b-42d3-a456-'+String(i).padStart(12,'0')) // too many
+  ]) {
+    const failed=await fetchApi('/api/admin/machines','POST',{...values,areaIds:badIds});
+    assert.ok(failed.status===400 || failed.status===404);
+  }
+  catalog = await (await fetchApi('/api/catalog')).json();
+  assert.equal(catalog.machines.length,before);
+
+  // The old one-area API remains valid.
+  r=await fetchApi('/api/admin/machines','POST',{
+    ...values,areaIds:undefined,areaId:stores[0].areaA,name:'ラットプルダウン'
+  });
+  assert.equal(r.status,201);
+  const single=await r.json();
+  assert.equal(single.ids.length,1);
+  assert.equal(single.id,single.ids[0]);
+});
+
+test('multi-store step images belong to each registered machine', async () => {
+  const { env, fetchApi } = fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const storeA=(await (await fetchApi('/api/admin/stores','POST',{name:'店舗A'})).json()).id;
+  const storeB=(await (await fetchApi('/api/admin/stores','POST',{name:'店舗B'})).json()).id;
+  const areaA=(await (await fetchApi('/api/admin/areas','POST',{name:'マシン',storeId:storeA})).json()).id;
+  const areaB=(await (await fetchApi('/api/admin/areas','POST',{name:'マシン',storeId:storeB})).json()).id;
+  const imageId='123e4567-e89b-42d3-a456-426614174000';
+  const jpeg=Uint8Array.from([255,216,255,224,0,16,74,70,73,70,0,1]).buffer;
+  const adjustment='@FIT_IMG_V1:'+JSON.stringify([{text:'シートを合わせる',imageId}]);
+  const payload={name:'レッグプレス',areaIds:[areaA,areaB],overview:'',adjustment:'',instructions:'',tips:'',safety:''};
+  const result=await (await fetchApi('/api/admin/machines','POST',payload)).json();
+  for(let i=0; i<result.ids.length; i++){
+    const id=result.ids[i];
+    assert.equal((await fetchApi('/api/admin/machines/'+id+'/images/'+imageId,'PUT',jpeg)).status,200);
+    assert.equal((await fetchApi('/api/admin/machines/'+id,'PATCH',
+      {...payload,areaId:payload.areaIds[i],adjustment})).status,200);
+    assert.equal((await fetchApi('/api/manual-image/'+id+'/'+imageId)).status,200);
+  }
+  // Removing one manual does not delete the other store's image.
+  assert.equal((await fetchApi('/api/admin/machines/'+result.ids[0],'DELETE')).status,200);
+  assert.equal((await fetchApi('/api/manual-image/'+result.ids[0]+'/'+imageId)).status,404);
+  assert.equal((await fetchApi('/api/manual-image/'+result.ids[1]+'/'+imageId)).status,200);
+});
