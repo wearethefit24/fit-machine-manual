@@ -118,14 +118,65 @@ async function serveLogo(req, env) {
   });
 }
 
+// A shared group is the single source of truth for manuals in several stores.
+// On an existing D1 database the optional tables are created on first admin save;
+// public reads continue to work before that first save without a manual migration.
+async function ensureManualGroupTables(db) {
+  await db.prepare(`CREATE TABLE IF NOT EXISTS machine_manual_groups (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL,
+    overview TEXT NOT NULL DEFAULT '', adjustment TEXT NOT NULL DEFAULT '',
+    instructions TEXT NOT NULL DEFAULT '', tips TEXT NOT NULL DEFAULT '',
+    safety TEXT NOT NULL DEFAULT '', thumbnail_state INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')))`).run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS machine_manual_members (
+    machine_id TEXT PRIMARY KEY REFERENCES machines(id) ON DELETE CASCADE,
+    group_id TEXT NOT NULL REFERENCES machine_manual_groups(id) ON DELETE CASCADE)`).run();
+  await db.prepare('CREATE INDEX IF NOT EXISTS idx_machine_manual_members_group ON machine_manual_members(group_id)').run();
+}
+function isLegacyDatabaseError(error) {
+  return /no such table:\s*(machine_manual_groups|machine_manual_members)/i.test(String(error?.message || error));
+}
+async function groupForMachine(db, machineId) {
+  try {
+    return await db.prepare(`SELECT g.* FROM machine_manual_groups g
+      JOIN machine_manual_members mm ON mm.group_id=g.id
+      WHERE mm.machine_id=?`).bind(machineId).first();
+  } catch (error) { if (isLegacyDatabaseError(error)) return null; throw error; }
+}
+async function groupMachines(db, groupId) {
+  return (await db.prepare(`SELECT m.id,m.area_id AS areaId,a.store_id AS storeId,a.name AS areaName
+    FROM machine_manual_members mm
+    JOIN machines m ON m.id=mm.machine_id
+    JOIN areas a ON a.id=m.area_id WHERE mm.group_id=?
+    ORDER BY a.store_id`).bind(groupId).all()).results;
+}
 async function catalog(db) {
-  const [storeRows, areaRows, machineRows] = await Promise.all([
+  const [storeRows, areaRows] = await Promise.all([
     db.prepare('SELECT id,name,position FROM stores ORDER BY position,name').all(),
-    db.prepare('SELECT id,store_id AS storeId,name,position FROM areas ORDER BY position,name').all(),
-    db.prepare(`SELECT m.id,m.area_id AS areaId,m.name,m.position,m.overview,m.adjustment,m.instructions,m.tips,m.safety
-      FROM machines m ORDER BY m.position,m.name`).all(),
+    db.prepare('SELECT id,store_id AS storeId,name,position FROM areas ORDER BY position,name').all()
   ]);
-  return { stores: storeRows.results, areas: areaRows.results, machines: machineRows.results };
+  let machineRows;
+  try {
+    machineRows = await db.prepare(`SELECT m.id,m.area_id AS areaId,
+      COALESCE(g.name,m.name) AS name,m.position,
+      COALESCE(g.overview,m.overview) AS overview,
+      COALESCE(g.adjustment,m.adjustment) AS adjustment,
+      COALESCE(g.instructions,m.instructions) AS instructions,
+      COALESCE(g.tips,m.tips) AS tips,
+      COALESCE(g.safety,m.safety) AS safety,
+      g.id AS groupId
+      FROM machines m
+      LEFT JOIN machine_manual_members mm ON mm.machine_id=m.id
+      LEFT JOIN machine_manual_groups g ON g.id=mm.group_id
+      ORDER BY m.position,m.name`).all();
+  } catch(error) {
+    if (!isLegacyDatabaseError(error)) throw error;
+    machineRows = await db.prepare(`SELECT id,area_id AS areaId,name,position,
+      overview,adjustment,instructions,tips,safety
+      FROM machines ORDER BY position,name`).all();
+  }
+  return {stores:storeRows.results,areas:areaRows.results,machines:machineRows.results};
 }
 // Track deletion independent of the video FK so a store can be removed without losing cleanup metadata.
 async function enqueueCleanup(db, videos) {
