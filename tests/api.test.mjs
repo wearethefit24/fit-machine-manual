@@ -243,7 +243,6 @@ test('machine manuals can be created across multiple stores atomically', async (
   // Invalid batches must not register any machines.
   const before = catalog.machines.length;
   for(const badIds of [
-    [stores[0].areaA,stores[0].areaB], // same store twice
     [stores[0].areaB, stores[0].areaB], // duplicated area
     [stores[0].areaB, '123e4567-e89b-42d3-a456-426614174000'], // unknown area
     [], // empty destination list
@@ -373,4 +372,69 @@ test('machine registration selects stores without pre-existing areas',async()=>{
   assert.equal(bad.status,400);
   assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,2);
   assert.ok(existing);
+});
+
+test('one machine manual can target several areas within each selected store', async () => {
+  const { env, fetchApi } = fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+
+  const storeA = (await (await fetchApi('/api/admin/stores','POST',{name:'江古田店'})).json()).id;
+  const storeB = (await (await fetchApi('/api/admin/stores','POST',{name:'大宮店'})).json()).id;
+  const storeC = (await (await fetchApi('/api/admin/stores','POST',{name:'新店舗'})).json()).id;
+  const areaA1 = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeA,name:'1F'})).json()).id;
+  const areaA2 = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeA,name:'2F'})).json()).id;
+  const areaB1 = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeB,name:'ウェイト'})).json()).id;
+  const areaB2 = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeB,name:'有酸素'})).json()).id;
+  const selected = [
+    {storeId:storeA,areaId:areaA1},
+    {storeId:storeA,areaId:areaA2},
+    {storeId:storeB,areaId:areaB1},
+    {storeId:storeB,areaId:areaB2},
+    {storeId:storeC,areaId:null}
+  ];
+  const values = {name:'ラットプルダウン',storeSelections:selected,
+    overview:'背中を鍛える',adjustment:'座面を調整',instructions:'握って引く',
+    tips:'肩をすくめない',safety:'無理な重量にしない'};
+  const response = await fetchApi('/api/admin/machines','POST',values);
+  assert.equal(response.status,201);
+  const result = await response.json();
+  assert.equal(result.ids.length,5);
+  assert.equal(result.areaIds.length,5);
+  assert.equal(new Set(result.ids).size,5);
+  assert.deepEqual(result.areaIds.slice(0,4),[areaA1,areaA2,areaB1,areaB2]);
+  const catalog=await (await fetchApi('/api/catalog')).json();
+  for(let i=0;i<selected.length;i++){
+    const machine=catalog.machines.find(row=>row.id===result.ids[i]);
+    assert.ok(machine);
+    assert.equal(machine.areaId,result.areaIds[i]);
+    assert.equal(machine.overview,values.overview);
+    assert.equal(machine.instructions,values.instructions);
+  }
+  const generatedArea = catalog.areas.find(row=>row.id===result.areaIds[4]);
+  assert.equal(generatedArea.storeId,storeC);
+  assert.equal(generatedArea.name,'マシン');
+
+  // Another area in the same store is an independent machine/QR destination.
+  assert.notEqual(result.ids[0],result.ids[1]);
+  const invalid = [
+    [{storeId:storeA,areaId:areaA1},{storeId:storeA,areaId:areaA1}],
+    [{storeId:storeA,areaId:areaB1}],
+    [{storeId:storeC,areaId:null},{storeId:storeC,areaId:null}],
+    [{storeId:storeA,areaId:null}],
+    [{storeId:storeA,areaId:areaA1},{storeId:storeB,areaId:'123e4567-e89b-42d3-a456-426614174099'}]
+  ];
+  for(const storeSelections of invalid){
+    const failed=await fetchApi('/api/admin/machines','POST',{...values,storeSelections});
+    assert.ok([400,404,409].includes(failed.status));
+  }
+  assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,5);
+
+  // Older areaIds clients may now target multiple areas in the same store too.
+  const legacy=await fetchApi('/api/admin/machines','POST',{
+    ...values,storeSelections:undefined,areaIds:[areaA1,areaA2],name:'チェストプレス'
+  });
+  assert.equal(legacy.status,201);
+  const oldResult=await legacy.json();
+  assert.deepEqual(oldResult.areaIds,[areaA1,areaA2]);
+  assert.equal(oldResult.ids.length,2);
 });
