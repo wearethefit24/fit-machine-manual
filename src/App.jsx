@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, CheckCircle2, ChevronRight,
-  ClipboardList, Download, Dumbbell, Edit3, ExternalLink, Film, FolderOpen, ImagePlus, Info,
+  ClipboardList, Download, Dumbbell, Edit3, ExternalLink, FolderOpen, ImagePlus, Info,
   Layers3, Link2, LoaderCircle, LockKeyhole, LogOut, MapPin, Menu, Plus, QrCode, ScanQrCode,
   Save, Settings2, Share2, ShieldAlert, Smartphone, Sparkles, TriangleAlert, Trash2, UploadCloud,
-  Video, X, ZoomIn
+  X, ZoomIn
 } from 'lucide-react';
 import QRCode from 'qrcode';
 
@@ -391,12 +391,6 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
               <h1 className="manual-machine-name">{machine.name}</h1>
               <p className="manual-location">{[currentStore?.name, currentArea?.name].filter(Boolean).join(' / ')}</p>
             </header>
-            {machine.videoId && <div className="manual-video-frame">
-              <video className="manual-video-player" src={'/api/video/' + machine.videoId}
-                controls playsInline preload="metadata" aria-label={machine.name + 'の使用動画'}>
-                お使いのブラウザは動画の再生に対応していません。
-              </video>
-            </div>}
             <div className="manual-guide-sections">
               {GUIDE_SECTIONS.map(({ field, title, kind, Icon }) =>
                 field === 'tips' ? null :
@@ -456,7 +450,7 @@ function StoresAdmin({ catalog, refresh, notify, tidy }) {
     catch (e) { notify(e.message, true); } finally { setPending(false); }
   }
   async function remove(s) {
-    if (!window.confirm(`「${s.name}」を削除しますか？所属するエリア・マシン・動画も削除されます。`)) return;
+    if (!window.confirm(`「${s.name}」を削除しますか？所属するエリア・マシンと説明画像も削除されます。`)) return;
     try { await api(`/api/admin/stores/${s.id}`, { method: 'DELETE' }); await refresh(); await tidy(); if (editing === s.id) reset(); notify('店舗を削除しました。'); } catch (e) { notify(e.message, true); }
   }
   return <div className="space-y-4"><div className="admin-card"><h3 className="card-title">{editing ? '店舗を編集' : '店舗を追加'}</h3><Field title="店舗名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：江古田店"/></Field><div className="flex gap-2 mt-4"><Action onClick={save} pending={pending} className="flex-1">{editing ? '変更を保存' : '店舗を登録'}</Action>{editing && <button onClick={reset} className="btn btn-secondary"><X size={17}/>取消</button>}</div></div>
@@ -471,7 +465,7 @@ function AreasAdmin({ catalog, refresh, notify, tidy }) {
     catch (e) { notify(e.message, true); } finally { setPending(false); }
   }
   async function remove(a) {
-    if (!window.confirm(`「${a.name}」を削除しますか？所属するマシンと動画も削除されます。`)) return;
+    if (!window.confirm(`「${a.name}」を削除しますか？所属するマシンと説明画像も削除されます。`)) return;
     try { await api(`/api/admin/areas/${a.id}`, { method: 'DELETE' }); await refresh(); await tidy(); if (editing === a.id) reset(); notify('エリアを削除しました。'); } catch (e) { notify(e.message, true); }
   }
   return <div className="space-y-4"><div className="admin-card"><h3 className="card-title">{editing ? 'エリアを編集' : 'エリアを追加'}</h3><div className="space-y-4"><Field title="店舗"><select className={fieldInput} value={selectedStore} onChange={e => setStoreId(e.target.value)}><option value="">店舗を選択</option>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field><Field title="エリア名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：有酸素エリア"/></Field></div><div className="flex gap-2 mt-4"><Action pending={pending || !catalog.stores.length} onClick={save} className="flex-1">{editing ? '変更を保存' : 'エリアを登録'}</Action>{editing && <button className="btn btn-secondary" onClick={reset}>取消</button>}</div></div>
@@ -660,7 +654,6 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   const [areaId, setAreaId] = useState(initialArea?.id || '');
   const [name, setName] = useState(machine?.name || '');
   const [fields, setFields] = useState(Object.fromEntries(Object.keys(initialFields).map(k => [k, machine?.[k] || ''])));
-  const [file, setFile] = useState(null);
   const [pending, setPending] = useState(false);
   const [progress, setProgress] = useState('');
   const [imagePreviews, setImagePreviews] = useState({});
@@ -694,21 +687,8 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   }
   const shownAreas = catalog.areas.filter(a => a.storeId === storeId);
   function onStoreChange(id) { setStoreId(id); setAreaId(catalog.areas.find(a => a.storeId === id)?.id || ''); }
-  async function upload(machineId, sourceFile) {
-    const mime = sourceFile.type || (sourceFile.name.toLowerCase().endsWith('.mp4') ? 'video/mp4' : '');
-    const { videoId, chunkSize, chunkCount } = await send(`/api/admin/machines/${machineId}/video/init`, 'POST', { filename: sourceFile.name, mimeType: mime, size: sourceFile.size });
-    for (let i = 0; i < chunkCount; i++) {
-      setProgress(`動画アップロード中 ${i + 1} / ${chunkCount}`);
-      const chunk = sourceFile.slice(i * chunkSize, Math.min(sourceFile.size, (i + 1) * chunkSize));
-      const response = await api(`/api/admin/videos/${videoId}/chunks/${i}`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: chunk });
-      if (!response?.ok) throw new Error('動画アップロードに失敗しました。');
-    }
-    setProgress('動画の登録を完了しています…');
-    await send(`/api/admin/videos/${videoId}/finish`, 'POST', {});
-  }
   async function save() {
     if (!name.trim() || !areaId) { notify('マシン名とエリアを入力してください。', true); return; }
-    if (file && (file.size > 80 * 1024 * 1024 || !['video/mp4', 'video/webm', 'video/quicktime'].includes(file.type || (file.name.toLowerCase().endsWith('.mp4') ? 'video/mp4' : '')))) { notify('MP4・WebM・MOV、80MiB以内の動画を選択してください。', true); return; }
     try {
       setPending(true); setProgress('マシン情報を保存しています…');
       let id = workingMachineId.current;
@@ -741,8 +721,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
         setProgress('説明文と画像を保存しています…');
         await send(`/api/admin/machines/${id}`, 'PATCH', { name: name.trim(), areaId, ...fields });
       }
-      if (file) await upload(id, file);
-      await refresh(); await tidy(); setFile(null);
+      await refresh(); await tidy();
       const previewsToRevoke = imagePreviewsRef.current;
       imagePreviewsRef.current = {};
       setImagePreviews({});
@@ -751,14 +730,9 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
     } catch (e) { notify(`${e.message}（情報だけ保存されている場合があります）`, true); await refresh(); }
     finally { setPending(false); setProgress(''); }
   }
-  async function deleteVideo() {
-    if (!machine?.videoId || !window.confirm('このマシンの動画を削除しますか？')) return;
-    try { await api(`/api/admin/videos/${machine.videoId}`, { method: 'DELETE' }); await refresh(); await tidy(); notify('動画を削除しました。'); } catch (e) { notify(e.message, true); }
-  }
   return <div className="space-y-4"><div className="admin-card"><div className="flex justify-between items-center mb-5"><h3 className="card-title !mb-0">{machine ? 'マシンを編集' : '新しいマシンを登録'}</h3><button onClick={onCancel} className="icon-button"><X size={19}/></button></div>
     <div className="space-y-4"><Field title="店舗"><select className={fieldInput} value={storeId} onChange={e => onStoreChange(e.target.value)}>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field><Field title="エリア"><select className={fieldInput} value={areaId} onChange={e => setAreaId(e.target.value)}>{shownAreas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field><Field title="マシン名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：チェストプレス"/></Field>
-    <div className="divider-line"/><Field title="動画ファイル（直接アップロード）" hint="MP4推奨 / 最大80MiB。動画がない場合は文章のみでも登録できます。"><label className="upload-zone"><UploadCloud size={25} className="text-white"/><span className="text-sm text-white">{file ? file.name : 'タップして動画を選ぶ'}</span><span className="text-xs text-neutral-300">MP4 / WebM / MOV</span><input type="file" className="sr-only" accept=".mp4,.webm,.mov,video/mp4,video/webm,video/quicktime" onChange={e => setFile(e.target.files?.[0] || null)}/></label></Field>
-    {machine?.videoId && <div className="existing-video"><div className="flex gap-2 items-center text-sm text-white"><CheckCircle2 size={17} className="text-white"/>登録済み動画：{machine.videoFilename || '動画ファイル'}</div><div className="flex gap-2 mt-3"><a href={`/api/video/${machine.videoId}`} target="_blank" rel="noopener noreferrer" className="btn btn-secondary text-xs flex-1"><Video size={15}/> 動画を開く</a><button className="btn btn-danger text-xs" onClick={deleteVideo}><Trash2 size={15}/> 削除</button></div></div>}
+    <div className="divider-line"/>
     {CONTENT_FIELDS.map(([key, title], i) => key === 'overview'
       ? <Field key={key} title={`${num(i + 1)} ${title}`}><textarea className={`${fieldInput} textarea`} rows={3} value={fields[key]} onChange={e => setFields(prev => ({ ...prev, [key]: e.target.value }))} maxLength={15000} placeholder={`${title}を入力してください`}/></Field>
       : <ManualItemsEditor key={key} title={`${num(i + 1)} ${title}`} field={key}
@@ -786,7 +760,7 @@ function MachinesAdmin({ catalog, refresh, notify, tidy }) {
     try { await send(`/api/admin/areas/${selectedArea.id}/reorder`, 'POST', { ids }); await refresh(); notify('並び順を変更しました。'); } catch (e) { notify(e.message, true); }
   }
   async function remove(m) {
-    if (!window.confirm(`「${m.name}」を削除しますか？動画とQRコードの閲覧先も無効になります。`)) return;
+    if (!window.confirm(`「${m.name}」を削除しますか？説明画像が削除され、QRコードの閲覧先も無効になります。`)) return;
     try { await api(`/api/admin/machines/${m.id}`, { method: 'DELETE' }); if (selectedId === m.id) setSelectedId(undefined); await refresh(); await tidy(); notify('マシンを削除しました。'); } catch (e) { notify(e.message, true); }
   }
   if (editing) return <div className="space-y-4"><button className="back-btn" onClick={() => setSelectedId(undefined)}><ArrowLeft size={18}/>マシン一覧</button><MachineEditor key={selectedId || 'new'} machine={selectedMachine} catalog={catalog} initialAreaId={selectedArea?.id} refresh={refresh} onSaved={id => setSelectedId(id)} onCancel={() => setSelectedId(undefined)} notify={notify} tidy={tidy}/></div>;
@@ -794,7 +768,7 @@ function MachinesAdmin({ catalog, refresh, notify, tidy }) {
     <Field title="店舗を選択"><select className={fieldInput} value={selectedStore?.id || ''} onChange={e => { setStoreFilter(e.target.value); setAreaFilter(''); }}>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
     <Field title="エリアを選択"><select className={fieldInput} value={selectedArea?.id || ''} onChange={e => setAreaFilter(e.target.value)}>{areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field></div>
     <div className="admin-card"><div className="flex justify-between items-center mb-4"><h3 className="card-title !mb-0">表示順 <span className="count">{machines.length}</span></h3><span className="text-xs text-neutral-300">↑ ↓ で並び替え</span></div>
-    {machines.length ? machines.map((m, i) => <div key={m.id} className="machine-row"><div className="flex flex-col gap-1.5"><button aria-label={`${m.name}を上へ`} disabled={i === 0} className="arrow-button" onClick={() => move(m,-1)}><ArrowUp size={17}/></button><button aria-label={`${m.name}を下へ`} disabled={i === machines.length - 1} className="arrow-button" onClick={() => move(m,1)}><ArrowDown size={17}/></button></div><span className="text-xs font-bold text-neutral-300 w-6 text-center">{num(i)}</span><div className="flex-1 min-w-0"><div className="font-semibold text-white truncate">{m.name}</div><div className="text-xs text-neutral-300 mt-1">{m.videoId ? '動画登録済み' : '動画なし'} ・ 取説あり</div></div><SmallActions onEdit={() => setSelectedId(m.id)} onDelete={() => remove(m)}/></div>) : <Empty title="マシンがありません" description="店舗・エリアを追加してからマシンを登録してください。"/>}
+    {machines.length ? machines.map((m, i) => <div key={m.id} className="machine-row"><div className="flex flex-col gap-1.5"><button aria-label={`${m.name}を上へ`} disabled={i === 0} className="arrow-button" onClick={() => move(m,-1)}><ArrowUp size={17}/></button><button aria-label={`${m.name}を下へ`} disabled={i === machines.length - 1} className="arrow-button" onClick={() => move(m,1)}><ArrowDown size={17}/></button></div><span className="text-xs font-bold text-neutral-300 w-6 text-center">{num(i)}</span><div className="flex-1 min-w-0"><div className="font-semibold text-white truncate">{m.name}</div><div className="text-xs text-neutral-300 mt-1">取扱説明書あり</div></div><SmallActions onEdit={() => setSelectedId(m.id)} onDelete={() => remove(m)}/></div>) : <Empty title="マシンがありません" description="店舗・エリアを追加してからマシンを登録してください。"/>}
     </div></div>;
 }
 function Login({ onLogin, notify }) {
