@@ -93,7 +93,7 @@ function SiteHeader({ logoRevision, admin = false }) {
         onLoad={() => setLoaded(true)} onError={() => setLoaded(false)} />
       {!loaded && <span className="site-logo-fallback" aria-label="WE ARE THE FIT">WE ARE<br/>THE FIT</span>}
     </div>
-    {admin && <a className="site-header-public-link" href="/"
+    {admin && <a className="site-header-public-link" href="/" target="_blank" rel="noopener noreferrer"
       aria-label="表示ページへ移動" title="表示ページへ移動">
       <svg viewBox="0 0 294 486" xmlns="http://www.w3.org/2000/svg"
         width="24" height="40" aria-hidden="true" focusable="false">
