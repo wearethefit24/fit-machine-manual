@@ -531,11 +531,17 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
         storeId,areaId:matchingMap.get(storeId),
         machineId:currentByStore.get(storeId)?.id || reusableByStore.get(storeId) || crypto.randomUUID()
       }));
-      // Preserve photos from older per-store copies before changing their
-      // placement membership. The new shared asset wins when already present.
-      const sourceIds=[...new Set([...current.map(item=>item.id),
-        ...placements.map(item=>item.machineId)])];
-      if(sourceIds.length) {
+      const keptIds = new Set(placements.map(item=>item.machineId));
+      const removed = current.filter(item=>!keptIds.has(item.id));
+      // Existing members keep their own legacy KV image keys and public/admin
+      // image handlers already fall back to those keys. Copying every image
+      // and probing every store on *every save* was wasteful and could exceed
+      // Cloudflare Free subrequest limits. Migration is only needed when a
+      // member is about to be removed and its old media would be deleted.
+      const sourceIds=removed.map(item=>item.id);
+      const existingGroup=await db.prepare('SELECT thumbnail_state FROM machine_manual_groups WHERE id=?')
+        .bind(groupId).first();
+      if(sourceIds.length){
         const referenced=new Set([...manualImageIds(v.adjustment),
           ...manualImageIds(v.instructions)]);
         for(const imageId of referenced){
@@ -551,10 +557,8 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
         }
       }
       let copiedLegacyThumbnail=false;
-      const existingGroup=await db.prepare('SELECT thumbnail_state FROM machine_manual_groups WHERE id=?')
-        .bind(groupId).first();
       if(sourceIds.length && existingGroup?.thumbnail_state!==-1 &&
-         !await env.VIDEO_KV.get(THUMBNAIL_KEY(groupId),'arrayBuffer')) {
+         !await env.VIDEO_KV.get(THUMBNAIL_KEY(groupId),'arrayBuffer')){
         for(const oldId of sourceIds){
           const thumbnail=await env.VIDEO_KV.get(THUMBNAIL_KEY(oldId),'arrayBuffer');
           if(thumbnail){
@@ -564,8 +568,6 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
           }
         }
       }
-      const keptIds = new Set(placements.map(item=>item.machineId));
-      const removed = current.filter(item=>!keptIds.has(item.id));
       const obsoleteImages = [];
       const obsoleteVideos = [];
       for(const row of removed){
