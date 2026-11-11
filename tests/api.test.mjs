@@ -438,3 +438,55 @@ test('one machine manual can target several areas within each selected store', a
   assert.deepEqual(oldResult.areaIds,[areaA1,areaA2]);
   assert.equal(oldResult.ids.length,2);
 });
+
+test('machine picker thumbnails require admin uploads and display publicly', async () => {
+  const { env, fetchApi } = fixture();
+  const jpeg = Uint8Array.from([255,216,255,224,0,16,74,70,73,70,0,1]).buffer;
+  const png = Uint8Array.from([137,80,78,71,13,10,26,10,0]).buffer;
+  const authless = '123e4567-e89b-42d3-a456-426614174000';
+  assert.equal((await fetchApi('/api/admin/machines/'+authless+'/thumbnail','PUT',jpeg)).status,401);
+  assert.equal((await fetchApi('/api/machine-thumbnail/'+authless)).status,404);
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const store = (await (await fetchApi('/api/admin/stores','POST',{name:'江古田店'})).json()).id;
+  const area = (await (await fetchApi('/api/admin/areas','POST',{name:'ウェイト',storeId:store})).json()).id;
+  const machine = (await (await fetchApi('/api/admin/machines','POST',{
+    name:'チェストプレス',areaId:area,overview:'',adjustment:'',instructions:'',tips:'',safety:''
+  })).json()).id;
+  const photoUrl='/api/machine-thumbnail/'+machine;
+  assert.equal((await fetchApi(photoUrl)).status,404);
+  assert.equal((await fetchApi('/api/admin/machines/'+machine+'/thumbnail','PUT',png)).status,400);
+  assert.equal((await fetchApi('/api/admin/machines/'+machine+'/thumbnail','PUT',jpeg)).status,200);
+  const photo=await fetchApi(photoUrl);
+  assert.equal(photo.status,200);
+  assert.equal(photo.headers.get('content-type'),'image/jpeg');
+  assert.deepEqual(new Uint8Array(await photo.arrayBuffer()),new Uint8Array(jpeg));
+  assert.equal((await fetchApi(photoUrl,'HEAD')).status,200);
+  assert.equal((await fetchApi('/api/admin/machines/'+machine+'/thumbnail','DELETE')).status,200);
+  assert.equal((await fetchApi(photoUrl)).status,404);
+  assert.equal(env.VIDEO_KV.values.has('machine-thumb:'+machine),false);
+});
+
+test('machine picker thumbnail copies stay independent and parent deletion cleans KV', async () => {
+  const { env, fetchApi } = fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const storeIds=[];
+  for(const name of ['A店','B店'])
+    storeIds.push((await (await fetchApi('/api/admin/stores','POST',{name})).json()).id);
+  const areas=[];
+  for(const storeId of storeIds)
+    areas.push((await (await fetchApi('/api/admin/areas','POST',{name:'マシン',storeId})).json()).id);
+  const created=await (await fetchApi('/api/admin/machines','POST',{
+    name:'レッグプレス',areaIds:areas,overview:'',adjustment:'',instructions:'',tips:'',safety:''
+  })).json();
+  assert.equal(created.ids.length,2);
+  const jpeg=Uint8Array.from([255,216,255,224,0,16,74,70,73,70,0,1]).buffer;
+  for(const mid of created.ids)
+    assert.equal((await fetchApi('/api/admin/machines/'+mid+'/thumbnail','PUT',jpeg)).status,200);
+  for(const mid of created.ids)
+    assert.equal((await fetchApi('/api/machine-thumbnail/'+mid)).status,200);
+  assert.equal((await fetchApi('/api/admin/machines/'+created.ids[0],'DELETE')).status,200);
+  assert.equal(env.VIDEO_KV.values.has('machine-thumb:'+created.ids[0]),false);
+  assert.equal((await fetchApi('/api/machine-thumbnail/'+created.ids[1])).status,200);
+  assert.equal((await fetchApi('/api/admin/stores/'+storeIds[1],'DELETE')).status,200);
+  assert.equal(env.VIDEO_KV.values.has('machine-thumb:'+created.ids[1]),false);
+});
