@@ -995,3 +995,57 @@ test('normal shared manual save does not probe every store legacy KV image key',
   assert.equal(machines.length,12);
   assert.ok(machines.every(machine=>machine.overview==='更新'));
 });
+
+test('newly registered machine QR lookup resolves from live public D1 records', async()=>{
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const store=(await (await fetchApi('/api/admin/stores','POST',{name:'江古田店'})).json()).id;
+  const area=(await (await fetchApi('/api/admin/areas','POST',{storeId:store,name:'マシン'})).json()).id;
+  const first=(await (await fetchApi('/api/admin/manual-groups','POST',{
+    name:'チェストプレス',areaName:'マシン',
+    storeSelections:[{storeId:store,areaId:area}],
+    overview:'マシン1台目',adjustment:'',instructions:'',tips:'',safety:''
+  })).json());
+  // A visitor that opened the page before the second registration still holds
+  // an old catalog, but scanning the second QR must query current D1 state.
+  const beforeSecond=(await (await fetchApi('/api/catalog')).json());
+  assert.equal(beforeSecond.machines.length,1);
+  const second=(await (await fetchApi('/api/admin/manual-groups','POST',{
+    name:'ラットプルダウン',areaName:'マシン',
+    storeSelections:[{storeId:store,areaId:area}],
+    overview:'マシン2台目',adjustment:'',instructions:'',tips:'',safety:''
+  })).json());
+  assert.notEqual(first.ids[0],second.ids[0]);
+  assert.equal(beforeSecond.machines.some(m=>m.id===second.ids[0]),false);
+  const qrResponse=await fetchApi('/api/public-machine/'+second.ids[0]);
+  assert.equal(qrResponse.status,200);
+  const qrMachine=await qrResponse.json();
+  assert.equal(qrMachine.id,second.ids[0]);
+  assert.equal(qrMachine.name,'ラットプルダウン');
+  assert.equal(qrMachine.overview,'マシン2台目');
+  assert.equal((await fetchApi('/api/public-machine/'+first.ids[0])).status,200);
+  assert.equal((await fetchApi('/api/public-machine/'+crypto.randomUUID())).status,404);
+  assert.equal((await fetchApi('/api/public-machine/not-a-uuid')).status,404);
+  // Publishing restrictions must never be bypassed by the direct QR resolver.
+  assert.equal((await fetchApi('/api/admin/visibility','POST',{
+    entityType:'group',ids:[second.groupId],isPublic:false
+  })).status,200);
+  assert.equal((await fetchApi('/api/public-machine/'+second.ids[0])).status,404);
+  assert.equal((await fetchApi('/api/public-machine/'+first.ids[0])).status,200);
+  assert.equal((await fetchApi('/api/admin/visibility','POST',{
+    entityType:'group',ids:[second.groupId],isPublic:true
+  })).status,200);
+  assert.equal((await fetchApi('/api/public-machine/'+second.ids[0])).status,200);
+  assert.equal((await fetchApi('/api/admin/visibility','POST',{
+    entityType:'area',ids:[area],isPublic:false
+  })).status,200);
+  assert.equal((await fetchApi('/api/public-machine/'+second.ids[0])).status,404);
+  assert.equal((await fetchApi('/api/admin/visibility','POST',{
+    entityType:'area',ids:[area],isPublic:true
+  })).status,200);
+  assert.equal((await fetchApi('/api/public-machine/'+second.ids[0])).status,200);
+  assert.equal((await fetchApi('/api/admin/visibility','POST',{
+    entityType:'store',ids:[store],isPublic:false
+  })).status,200);
+  assert.equal((await fetchApi('/api/public-machine/'+second.ids[0])).status,404);
+});
