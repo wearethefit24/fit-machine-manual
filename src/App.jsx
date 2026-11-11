@@ -1099,6 +1099,17 @@ function MachinesAdmin({ catalog, refresh, notify, tidy }) {
   const [areaFilter, setAreaFilter] = useState('');
   const [selectedId, setSelectedId] = useState(undefined);
   const [createKey, setCreateKey] = useState(0);
+  // Group shared manuals once; legacy independent copies are only grouped
+  // when both their names and complete instructions are identical.
+  const groupedMap=new Map();
+  for(const entry of catalog.machines){
+    const key=entry.groupId ? 'shared:'+entry.groupId :
+      'legacy:'+JSON.stringify([entry.name,entry.overview,entry.adjustment,
+        entry.instructions,entry.tips,entry.safety]);
+    if(!groupedMap.has(key)) groupedMap.set(key,{key,machine:entry,members:[]});
+    groupedMap.get(key).members.push(entry);
+  }
+  const groupedMachines=[...groupedMap.values()];
   const selectedStore = catalog.stores.find(s => s.id === storeFilter) || catalog.stores[0];
   const areas = catalog.areas.filter(a => a.storeId === selectedStore?.id);
   const selectedArea = areas.find(a => a.id === areaFilter) || areas[0];
@@ -1117,15 +1128,26 @@ function MachinesAdmin({ catalog, refresh, notify, tidy }) {
       notify('並び順を変更しました。');
     } catch (e) { notify(e.message, true); }
   }
-  async function remove(m) {
-    if (!window.confirm(`「${m.name}」を削除しますか？説明画像が削除され、QRコードの閲覧先も無効になります。`)) return;
+  async function remove(group) {
+    const ids=group.members.map(item=>item.id);
+    const stores=new Set(group.members.map(item=>
+      catalog.areas.find(area=>area.id===item.areaId)?.storeId).filter(Boolean));
+    const count=stores.size;
+    if (!window.confirm(`「${group.machine.name}」を登録先${count}店舗すべてから削除しますか？
+取扱説明書と画像が削除され、各店舗のQRコードも無効になります。`)) return;
     try {
-      await api(`/api/admin/machines/${m.id}`, { method: 'DELETE' });
-      if (selectedId === m.id) setSelectedId(undefined);
+      if(group.machine.groupId)
+        await api('/api/admin/manual-groups/'+group.machine.groupId,{method:'DELETE'});
+      else
+        for(const id of ids) await api('/api/admin/machines/'+id,{method:'DELETE'});
+      if(ids.includes(selectedId))setSelectedId(undefined);
       await refresh();
       await tidy();
-      notify('マシンを削除しました。');
-    } catch (e) { notify(e.message, true); }
+      notify('全店舗のマシン登録を削除しました。');
+    } catch(error) {
+      await refresh();
+      notify(error.message+'（削除状況を一覧で確認してください）',true);
+    }
   }
   if (editing) return <div className="space-y-4">
     <button className="back-btn" onClick={() => setSelectedId(undefined)}>
@@ -1147,38 +1169,72 @@ function MachinesAdmin({ catalog, refresh, notify, tidy }) {
           <Empty title="店舗がありません" description="先に「店舗」タブから店舗を登録してください。"/>
         </div>}
     <div className="admin-card space-y-4">
-      <h3 className="card-title">登録済みマシン <span className="count">{catalog.machines.length}</span></h3>
-      <Field title="店舗を選択">
-        <select className={fieldInput} value={selectedStore?.id || ''}
-          onChange={e => { setStoreFilter(e.target.value); setAreaFilter(''); }}>
-          {catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-      </Field>
-      <Field title="エリアを選択">
-        <select className={fieldInput} value={selectedArea?.id || ''}
-          onChange={e => setAreaFilter(e.target.value)}>
-          {areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
-      </Field>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold text-white">表示順</span>
-        <span className="text-xs text-neutral-300">{machines.length} 台・↑ ↓ で並び替え</span>
-      </div>
-      {machines.length ? machines.map((m, i) => <div key={m.id} className="machine-row">
-        <div className="flex flex-col gap-1.5">
-          <button aria-label={m.name + 'を上へ'} disabled={i === 0}
-            className="arrow-button" onClick={() => move(m,-1)}><ArrowUp size={17}/></button>
-          <button aria-label={m.name + 'を下へ'} disabled={i === machines.length - 1}
-            className="arrow-button" onClick={() => move(m,1)}><ArrowDown size={17}/></button>
+      <h3 className="card-title">
+        登録済みマシン <span className="count">{groupedMachines.length}</span>
+      </h3>
+      {groupedMachines.length ? groupedMachines.map(group=>{
+        const areasByName=new Map();
+        for(const item of group.members){
+          const area=catalog.areas.find(entry=>entry.id===item.areaId);
+          const store=catalog.stores.find(entry=>entry.id===area?.storeId);
+          if(!area || !store) continue;
+          if(!areasByName.has(area.name)) areasByName.set(area.name,[]);
+          if(!areasByName.get(area.name).includes(store.name))
+            areasByName.get(area.name).push(store.name);
+        }
+        return <div className="machine-group-row" key={group.key}>
+          <div className="machine-group-content">
+            <div className="machine-group-name">{group.machine.name}</div>
+            <div className="machine-group-areas">
+              {[...areasByName.entries()].map(([areaName,storeNames])=>
+                <div className="machine-group-area-line" key={areaName}>
+                  ｜{areaName} ・{storeNames.join('/')}｜
+                </div>)}
+            </div>
+          </div>
+          <SmallActions
+            onEdit={()=>setSelectedId(group.machine.id)}
+            onDelete={()=>remove(group)}/>
+        </div>;
+      }) : <Empty title="登録済みマシンがありません"
+        description="上の登録画面からマシンを追加してください。"/>}
+      <details className="machine-sort-details">
+        <summary>店舗・エリア別の表示順を変更</summary>
+        <div className="space-y-4 pt-4">
+          <Field title="店舗を選択">
+            <select className={fieldInput} value={selectedStore?.id || ''}
+              onChange={e=>{setStoreFilter(e.target.value);setAreaFilter('');}}>
+              {catalog.stores.map(store=><option key={store.id} value={store.id}>{store.name}</option>)}
+            </select>
+          </Field>
+          <Field title="エリアを選択">
+            <select className={fieldInput} value={selectedArea?.id || ''}
+              onChange={e=>setAreaFilter(e.target.value)}>
+              {areas.map(area=><option key={area.id} value={area.id}>{area.name}</option>)}
+            </select>
+          </Field>
+          <p className="manual-multistore-note">
+            店舗のマシン選択画面に表示する順番を調整します。
+          </p>
+          {machines.map((item,index)=><div className="machine-row" key={item.id}>
+            <div className="flex flex-col gap-1.5">
+              <button aria-label={item.name+'を上へ'} disabled={index===0}
+                className="arrow-button" onClick={()=>move(item,-1)}>
+                <ArrowUp size={17}/>
+              </button>
+              <button aria-label={item.name+'を下へ'} disabled={index===machines.length-1}
+                className="arrow-button" onClick={()=>move(item,1)}>
+                <ArrowDown size={17}/>
+              </button>
+            </div>
+            <span className="text-xs font-bold text-neutral-300 w-6 text-center">{num(index)}</span>
+            <span className="font-semibold text-white flex-1 min-w-0">{item.name}</span>
+          </div>)}
+          {!machines.length && <p className="manual-multistore-note">
+            この店舗・エリアにはマシンが登録されていません。
+          </p>}
         </div>
-        <span className="text-xs font-bold text-neutral-300 w-6 text-center">{num(i)}</span>
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-white truncate">{m.name}</div>
-          <div className="text-xs text-neutral-300 mt-1">取扱説明書あり</div>
-        </div>
-        <SmallActions onEdit={() => setSelectedId(m.id)} onDelete={() => remove(m)}/>
-      </div>) : <Empty title="マシンがありません"
-        description="選択した店舗・エリアにはマシンが登録されていません。"/>}
+      </details>
     </div>
   </div>;
 }
