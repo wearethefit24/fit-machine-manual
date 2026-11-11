@@ -498,6 +498,23 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
         areaIds:placements.map(p=>p.areaId),storeIds},d.groupId||d.seedMachineId?200:201);
     }
     if (!validId(id)) return fail('取扱説明書IDが不正です。');
+    if (method === 'DELETE' && !action) {
+      const existing=await db.prepare('SELECT id FROM machine_manual_groups WHERE id=?').bind(id).first();
+      if(!existing) return fail('取扱説明書が見つかりません。',404);
+      const members=await groupMachines(db,id);
+      const previousMedia=[];
+      for(const member of members){
+        previousMedia.push(...await deletingImages(db,'machine',member.id));
+        previousMedia.push(...await deletingVideos(db,'machine',member.id));
+      }
+      if(members.length) await db.batch(members.map(member=>
+        db.prepare('DELETE FROM machines WHERE id=?').bind(member.id)));
+      await enqueueCleanup(db,previousMedia);
+      await pruneEmptyManualGroups(db,[id]);
+      waitUntil(drainCleanup(env));
+      return json({ok:true,deleted:members.length});
+    }
+
     if (action === 'images' && validId(index) && method === 'PUT') {
       const exists = await db.prepare('SELECT id FROM machine_manual_groups WHERE id=?').bind(id).first();
       if (!exists) return fail('取扱説明書がありません。',404);
