@@ -82,10 +82,11 @@ function Alert({ children, kind = 'error' }) { return <div className={`alert ${k
 function Empty({ title, description, icon: Icon = FolderOpen }) { return <div className="empty"><div className="empty-icon"><Icon size={28}/></div><div className="font-semibold text-white">{title}</div><p className="text-sm text-neutral-200 leading-relaxed mt-2">{description}</p></div>; }
 function Back({ onClick, label = '戻る' }) { return <button className="back-btn" onClick={onClick}><ArrowLeft size={18}/>{label}</button>; }
 
-function SiteHeader({ logoRevision }) {
+function SiteHeader({ logoRevision, admin = false }) {
   const [loaded, setLoaded] = useState(false);
   useEffect(() => { setLoaded(false); }, [logoRevision]);
-  return <header className="site-header" aria-label="ジムのロゴ">
+  return <header className="site-header" aria-label={admin ? "管理画面のヘッダー" : "ジムのロゴ"}>
+    {admin && <span className="site-header-admin-title">管理画面</span>}
     <div className="site-logo-box">
       <img src={String('/api/logo?rev=' + logoRevision)} alt="ジムのロゴ"
         className={loaded ? 'site-logo-img' : 'site-logo-img site-logo-loading'}
@@ -1541,7 +1542,7 @@ function Admin({ catalog, refresh, error, logoRevision, onLogoChanged }) {
   function notify(message, isError = false) { setNotice({ message, isError }); }
   async function logout() { try { await api('/api/admin/logout', { method: 'POST' }); } catch {} setAuth('out'); setNotice(null); }
   return <div className="min-h-screen">
-    <main className="shell pb-22"><div className="hero admin-hero"><div className="eyebrow">STAFF CONTROL CENTER</div><h1 className="hero-title">管理画面<span className="hero-period">.</span></h1><p className="hero-sub">店舗・エリア・マシンとQRコードを一括管理</p></div>
+    <main className="shell pb-22"><div className="hero admin-hero"><div className="eyebrow">STAFF CONTROL CENTER</div><p className="hero-sub">店舗・エリア・マシンとQRコードを一括管理</p></div>
       {notice && <div className="mb-4"><Alert kind={notice.isError ? 'error' : 'ok'}>{notice.message}</Alert><button className="text-xs text-neutral-300 mt-2" onClick={() => setNotice(null)}>閉じる</button></div>}
       {error && <div className="mb-4"><Alert>{error}</Alert></div>}
       {auth === 'checking' ? <Skeleton/> : auth === 'out' ? <Login onLogin={() => { setAuth('in'); refresh(); }} notify={notify}/> : <>
@@ -1560,8 +1561,9 @@ export default function App() {
   useLayoutEffect(() => {resetPageScroll(window,document);},[route]);
   const [logoRevision, setLogoRevision] = useState(() => Date.now());
   const onLogoChanged = () => setLogoRevision(Date.now());
-  const page = route === '/admin' || route.startsWith('/admin/')
+  const isAdminRoute = route === '/admin' || route.startsWith('/admin/');
+  const page = isAdminRoute
     ? <Admin catalog={catalog} refresh={refresh} error={error} logoRevision={logoRevision} onLogoChanged={onLogoChanged}/>
     : <SwipeBackViewer catalog={catalog} loading={loading} error={error} route={route} navigate={navigate} refresh={refresh}/>;
-  return <><SiteHeader logoRevision={logoRevision}/><div className="page-under-header">{page}</div></>;
+  return <><SiteHeader logoRevision={logoRevision} admin={isAdminRoute}/><div className="page-under-header">{page}</div></>;
 }
