@@ -147,6 +147,20 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   z-index: 35;
   padding: calc(env(safe-area-inset-top, 0px) + 6px) 16px 6px;
 }
+.site-header-admin-title {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left, 0px));
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  max-width: calc(50% - 83px);
+}
 .site-logo-box {
   position: relative; display: flex; align-items: center; justify-content: center;
   width: 150px; height: 48px; max-height: 100%;
