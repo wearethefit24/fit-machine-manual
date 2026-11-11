@@ -1559,15 +1559,27 @@ html, body {
 /* Interactive right-swipe back navigation on visitor pages only. */
 .swipe-back-host {
   position: relative;
-  isolation: isolate;
   min-height: calc(100svh - var(--site-header-height));
-  overflow-x: clip;
 }
 .swipe-back-current {
   position: relative;
-  z-index: 1;
   min-height: calc(100svh - var(--site-header-height));
   background: var(--app-background, #111111);
+}
+/* At rest the QR camera dialog must escape this wrapper and remain above
+   the fixed site header. Create the gesture stacking context only mid-swipe. */
+.swipe-back-host.is-swipe-dragging,
+.swipe-back-host.is-swipe-settling {
+  overflow-x: clip;
+}
+.swipe-back-host.is-swipe-dragging .swipe-back-current,
+.swipe-back-host.is-swipe-settling .swipe-back-current {
+  z-index: 1;
+}
+.swipe-back-host.is-swipe-dragging .qr-scan-launcher,
+.swipe-back-host.is-swipe-settling .qr-scan-launcher {
+  opacity: 0;
+  pointer-events: none;
 }
 .swipe-back-behind {
   position: fixed;
