@@ -765,3 +765,118 @@ test('legacy photos survive moving a manual to a new store with a different area
   assert.equal((await fetchApi('/api/manual-image/'+legacy+'/'+imageId)).status,404);
   assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,1);
 });
+
+test('publish controls hide nested public catalog data and direct images but keep admin access', async () => {
+  const {env,fetchApi}=fixture();
+  const jpeg=Uint8Array.from([255,216,255,224,0,16,74,70,73,70,0,1]).buffer;
+  const imageId='123e4567-e89b-42d3-a456-426614174098';
+  const adjustment='@FIT_IMG_V1:'+JSON.stringify([{text:'手順',imageId}]);
+  assert.equal((await fetchApi('/api/admin/visibility','POST',{
+    entityType:'store',ids:['123e4567-e89b-42d3-a456-426614174098'],isPublic:false
+  })).status,401);
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const storeId=(await (await fetchApi('/api/admin/stores','POST',{name:'江古田店'})).json()).id;
+  const areaId=(await (await fetchApi('/api/admin/areas','POST',{
+    storeId,name:'フリーウェイト'
+  })).json()).id;
+  const machineId=(await (await fetchApi('/api/admin/machines','POST',{
+    areaId,name:'チェストプレス',overview:'',adjustment,instructions:'',
+    tips:'',safety:''
+  })).json()).id;
+  await fetchApi('/api/admin/machines/'+machineId+'/images/'+imageId,'PUT',jpeg);
+  await fetchApi('/api/admin/machines/'+machineId+'/thumbnail','PUT',jpeg);
+  const publicCatalog=()=>fetchApi('/api/catalog').then(res=>res.json());
+  const adminCatalog=()=>fetchApi('/api/admin/catalog').then(res=>res.json());
+  const setVisibility=(entityType,ids,isPublic)=>fetchApi('/api/admin/visibility','POST',{
+    entityType,ids,isPublic
+  });
+  assert.equal((await publicCatalog()).stores.length,1);
+  const photo='/api/manual-image/'+machineId+'/'+imageId;
+  const thumbnail='/api/machine-thumbnail/'+machineId;
+  assert.equal((await fetchApi(photo)).status,200);
+  assert.equal((await fetchApi(thumbnail)).status,200);
+  assert.equal((await setVisibility('store',[storeId],false)).status,200);
+  assert.deepEqual(await publicCatalog(),{stores:[],areas:[],machines:[]});
+  assert.equal((await fetchApi(photo)).status,404);
+  assert.equal((await fetchApi(thumbnail,'HEAD')).status,404);
+  assert.equal((await fetchApi('/api/admin/manual-image/'+machineId+'/'+imageId)).status,200);
+  assert.equal((await fetchApi('/api/admin/machine-thumbnail/'+machineId)).status,200);
+  let full=await adminCatalog();
+  assert.equal(full.stores[0].isPublic,false);
+  assert.equal(full.areas.length,1);
+  assert.equal(full.machines.length,1);
+  assert.equal(full.areas[0].isPublic,true);
+  assert.equal(full.machines[0].isPublic,true);
+  assert.equal((await setVisibility('store',[storeId],true)).status,200);
+  assert.equal((await publicCatalog()).machines.length,1);
+  assert.equal((await setVisibility('area',[areaId],false)).status,200);
+  assert.equal((await publicCatalog()).stores.length,1);
+  assert.equal((await publicCatalog()).areas.length,0);
+  assert.equal((await fetchApi(photo)).status,404);
+  assert.equal((await setVisibility('machine',[machineId],false)).status,200);
+  assert.equal((await setVisibility('area',[areaId],true)).status,200);
+  assert.equal((await publicCatalog()).areas.length,1);
+  assert.equal((await publicCatalog()).machines.length,0);
+  assert.equal((await fetchApi(thumbnail)).status,404);
+  full=await adminCatalog();
+  assert.equal(full.machines[0].isPublic,false);
+  assert.equal((await setVisibility('machine',[machineId],true)).status,200);
+  assert.equal((await publicCatalog()).machines.length,1);
+  assert.equal((await fetchApi(photo)).status,200);
+  assert.equal((await fetchApi(thumbnail)).status,200);
+  const invalid=await setVisibility('store',[storeId,storeId],false);
+  assert.equal(invalid.status,400);
+});
+
+test('a shared manual publish toggle affects every store placement while store visibility stays independent',async()=>{
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const stores=[],areas=[];
+  for(const name of ['A店','B店']){
+    const storeId=(await (await fetchApi('/api/admin/stores','POST',{name})).json()).id;
+    stores.push(storeId);
+    areas.push((await (await fetchApi('/api/admin/areas','POST',{
+      storeId,name:'マシン'
+    })).json()).id);
+  }
+  const group=(await (await fetchApi('/api/admin/manual-groups','POST',{
+    name:'トレッドミル',areaName:'マシン',storeIds:stores,
+    overview:'共通説明',adjustment:'',instructions:'',tips:'',safety:''
+  })).json());
+  assert.equal(group.ids.length,2);
+  const post=(entityType,ids,isPublic)=>fetchApi('/api/admin/visibility','POST',{
+    entityType,ids,isPublic
+  });
+  assert.equal((await post('group',[group.groupId],false)).status,200);
+  const hidden=(await (await fetchApi('/api/catalog')).json());
+  assert.equal(hidden.stores.length,2);
+  assert.equal(hidden.areas.length,2);
+  assert.equal(hidden.machines.length,0);
+  const full=(await (await fetchApi('/api/admin/catalog')).json());
+  assert.equal(full.machines.length,2);
+  assert.ok(full.machines.every(machine=>machine.isPublic===false));
+  assert.equal((await post('store',[stores[0]],false)).status,200);
+  assert.equal((await post('group',[group.groupId],true)).status,200);
+  const partial=(await (await fetchApi('/api/catalog')).json());
+  assert.equal(partial.stores.length,1);
+  assert.equal(partial.machines.length,1);
+  assert.equal(partial.machines[0].id,group.ids[1]);
+  assert.equal((await post('store',[stores[0]],true)).status,200);
+  assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,2);
+});
+
+test('visibility settings are initialized lazily for existing installations', async()=>{
+  const {env,fetchApi}=fixture();
+  env.DB.db.exec('DROP TABLE visibility_settings');
+  const before=await fetchApi('/api/catalog');
+  assert.equal(before.status,200);
+  assert.deepEqual(await before.json(),{stores:[],areas:[],machines:[]});
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const store=(await (await fetchApi('/api/admin/stores','POST',{name:'既存店'})).json()).id;
+  const hidden=await fetchApi('/api/admin/visibility','POST',{
+    entityType:'store',ids:[store],isPublic:false
+  });
+  assert.equal(hidden.status,200);
+  assert.deepEqual((await (await fetchApi('/api/catalog')).json()).stores,[]);
+  assert.equal((await (await fetchApi('/api/admin/catalog')).json()).stores[0].isPublic,false);
+});
