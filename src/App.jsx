@@ -527,7 +527,7 @@ function VisibilityToggle({isPublic,onChange,label}) {
       catch { /* The shared handler has already displayed an error. */ }
       finally {setPending(false);}
     }}>
-    {isPublic ? '公開' : '非公開'}
+    {isPublic ? '公開中' : '非公開中'}
   </button>;
 }
 
