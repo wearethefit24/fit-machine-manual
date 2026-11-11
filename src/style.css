@@ -1555,3 +1555,46 @@ html, body {
 @media (max-width: 360px) {
   .visibility-toggle { min-width: 66px; padding: 7px 5px; font-size: 11px; }
 }
+
+/* Interactive right-swipe back navigation on visitor pages only. */
+.swipe-back-host {
+  position: relative;
+  isolation: isolate;
+  min-height: calc(100svh - var(--site-header-height));
+  overflow-x: clip;
+}
+.swipe-back-current {
+  position: relative;
+  z-index: 1;
+  min-height: calc(100svh - var(--site-header-height));
+  background: var(--app-background, #111111);
+}
+.swipe-back-behind {
+  position: fixed;
+  inset: var(--site-header-height) 0 0;
+  z-index: 0;
+  background: var(--app-background, #111111);
+  overflow: hidden;
+  pointer-events: none;
+  transform: translate3d(-14px, 0, 0);
+  filter: brightness(.85);
+}
+.swipe-back-host.is-swipe-dragging .swipe-back-current,
+.swipe-back-host.is-swipe-settling .swipe-back-current {
+  transform: translate3d(var(--swipe-back-x, 0px), 0, 0);
+  box-shadow: -11px 0 25px rgba(0,0,0,.4);
+}
+.swipe-back-host.is-swipe-dragging .swipe-back-current {
+  will-change: transform;
+}
+.swipe-back-host.is-swipe-settling .swipe-back-current {
+  transition: transform 240ms cubic-bezier(.2,.8,.2,1);
+}
+@media (pointer: coarse) {
+  .swipe-back-host { touch-action: pan-y; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .swipe-back-host.is-swipe-settling .swipe-back-current {
+    transition: none;
+  }
+}
