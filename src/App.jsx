@@ -204,7 +204,7 @@ function QrScanner({ cameraRequest, onClose, onFound, onRetry }) {
     </div>
     <div className="qr-scanner-viewfinder">
       <video ref={videoRef} autoPlay playsInline muted className="qr-scanner-video"/>
-      <div className="qr-scanner-corners" aria-hidden="true"><ScanQrCode size={100} strokeWidth={1}/></div>
+      <div className="qr-scanner-corners" aria-hidden="true"><ScanQrCode size={400} strokeWidth={1}/></div>
     </div>
     <p className="qr-scanner-help" role="status">{message || 'マシンに貼られたQRコードをカメラの中央に合わせてください。'}</p>
     {retryable && <button type="button" className="btn btn-secondary qr-scanner-retry" onClick={onRetry}>カメラを再試行</button>}
