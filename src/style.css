@@ -246,7 +246,47 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   line-height: 1.05; letter-spacing: .16em; text-align: left;
   padding: 5px 8px;
 }
+/* The selection heading is a fixed sibling of the swipe page, not part of
+   the vertically scrolling content or horizontally translated swipe layer. */
+:root { --viewer-selection-title-height: 56px; }
+.viewer-fixed-titlebar {
+  position: fixed;
+  top: var(--site-header-height);
+  left: 0; right: 0;
+  height: var(--viewer-selection-title-height);
+  z-index: 34;
+  display: flex; align-items: center; justify-content: center;
+  padding: 4px 12px;
+  background: var(--app-background, #111111);
+}
+.viewer-fixed-title {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(21px, 5.7vw, 31px);
+  font-weight: 800;
+  line-height: 1.45;
+  letter-spacing: .015em;
+  text-align: center;
+  text-wrap: balance;
+}
+.viewer-fixed-title.is-machine {
+  font-size: clamp(21px, 5.8vw, 34px);
+  font-weight: 850;
+}
 .page-under-header { padding-top: var(--site-header-height); min-height: 100svh; }
+.page-under-header.has-fixed-selection-title {
+  padding-top: calc(var(--site-header-height) + var(--viewer-selection-title-height));
+}
+.page-under-header.has-fixed-selection-title .swipe-back-host,
+.page-under-header.has-fixed-selection-title .swipe-back-current,
+.page-under-header.has-fixed-selection-title .viewer-home,
+.page-under-header.has-fixed-selection-title .viewer-machine-picker {
+  min-height: calc(100svh - var(--site-header-height) - var(--viewer-selection-title-height));
+}
+.page-under-header.has-fixed-selection-title .viewer-home,
+.page-under-header.has-fixed-selection-title .viewer-machine-picker {
+  padding-top: 12px;
+}
 
 .viewer-home {
   min-height: calc(100svh - var(--site-header-height));
@@ -321,6 +361,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   :root { --site-header-height: calc(60px + env(safe-area-inset-top, 0px)); }
   .viewer-home { padding-inline: 12px; }
   .viewer-home-title { font-size: 20px; }
+  .viewer-fixed-title { font-size: 20px; }
   .viewer-home-buttons { gap: 24px; width: min(85vw, 305px); }
   .viewer-store-button { min-height: 95px; font-size: 31px; }
 }
