@@ -451,6 +451,39 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
         storeId,areaId:matchingMap.get(storeId),
         machineId:currentByStore.get(storeId)?.id || reusableByStore.get(storeId) || crypto.randomUUID()
       }));
+      // Preserve photos from older per-store copies before changing their
+      // placement membership. The new shared asset wins when already present.
+      const sourceIds=[...new Set([...current.map(item=>item.id),
+        ...placements.map(item=>item.machineId)])];
+      if(sourceIds.length) {
+        const referenced=new Set([...manualImageIds(v.adjustment),
+          ...manualImageIds(v.instructions)]);
+        for(const imageId of referenced){
+          const sharedKey=`manual:${groupId}:${imageId}`;
+          if(await env.VIDEO_KV.get(sharedKey,'arrayBuffer')) continue;
+          for(const oldId of sourceIds){
+            const photo=await env.VIDEO_KV.get(`manual:${oldId}:${imageId}`,'arrayBuffer');
+            if(photo){
+              await env.VIDEO_KV.put(sharedKey,photo);
+              break;
+            }
+          }
+        }
+      }
+      let copiedLegacyThumbnail=false;
+      const existingGroup=await db.prepare('SELECT thumbnail_state FROM machine_manual_groups WHERE id=?')
+        .bind(groupId).first();
+      if(sourceIds.length && existingGroup?.thumbnail_state!==-1 &&
+         !await env.VIDEO_KV.get(THUMBNAIL_KEY(groupId),'arrayBuffer')) {
+        for(const oldId of sourceIds){
+          const thumbnail=await env.VIDEO_KV.get(THUMBNAIL_KEY(oldId),'arrayBuffer');
+          if(thumbnail){
+            await env.VIDEO_KV.put(THUMBNAIL_KEY(groupId),thumbnail);
+            copiedLegacyThumbnail=true;
+            break;
+          }
+        }
+      }
       const keptIds = new Set(placements.map(item=>item.machineId));
       const removed = current.filter(item=>!keptIds.has(item.id));
       const obsoleteImages = [];
@@ -490,6 +523,9 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
       }
       for(const row of removed) statements.push(db.prepare('DELETE FROM machines WHERE id=?').bind(row.id));
       await db.batch(statements);
+      if(copiedLegacyThumbnail)
+        await db.prepare('UPDATE machine_manual_groups SET thumbnail_state=1 WHERE id=?')
+          .bind(groupId).run();
       if(obsoleteImages.length || obsoleteVideos.length) {
         await enqueueCleanup(db,[...obsoleteImages,...obsoleteVideos]);
         waitUntil(drainCleanup(env));
