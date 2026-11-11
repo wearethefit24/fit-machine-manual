@@ -9,7 +9,7 @@ import {
 import QRCode from 'qrcode';
 import {getViewerParentRoute,shouldCompleteSwipe} from './swipeNavigation.js';
 import {resetPageScroll} from './scrollNavigation.js';
-import {loadThumbnail,peekThumbnail,warmThumbnails} from './thumbnailCache.js';
+import {loadThumbnail,peekThumbnail,retainThumbnail,releaseThumbnail,warmThumbnails} from './thumbnailCache.js';
 
 const EMPTY = { stores: [], areas: [], machines: [] };
 const CONTENT_FIELDS = [
@@ -345,11 +345,15 @@ function MachineChoiceImage({ machineId }) {
   const [source,setSource]=useState(()=>peekThumbnail(machineId));
   useEffect(()=>{
     let active=true;
+    retainThumbnail(machineId);
     const ready=peekThumbnail(machineId);
     if(ready)setSource(ready);
     else setSource(null);
     loadThumbnail(machineId).then(url=>{if(active)setSource(url);});
-    return ()=>{active=false;};
+    return ()=>{
+      active=false;
+      releaseThumbnail(machineId);
+    };
   },[machineId]);
   return <span className="viewer-machine-placeholder" aria-hidden="true">
     {source && <img className="viewer-machine-thumbnail is-ready" src={source}
