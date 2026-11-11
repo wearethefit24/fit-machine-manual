@@ -763,12 +763,22 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   const initialArea = machine
     ? catalog.areas.find(a => a.id === machine.areaId) || catalog.areas[0]
     : null;
-  const [storeId, setStoreId] = useState(initialArea?.storeId || '');
-  const [areaId, setAreaId] = useState(initialArea?.id || '');
-  // A machine belongs to one area category, regardless of how many stores carry it.
+  // One manual is edited for all of its store placements. Before the first
+  // shared save, recover original identical multi-store copies conservatively.
   const areaNames = [...new Set(catalog.areas.map(area => area.name.trim()).filter(Boolean))];
-  const [selectedAreaName, setSelectedAreaName] = useState('');
-  const [selectedStoreIds, setSelectedStoreIds] = useState([]);
+  const relatedMachines = machine ? catalog.machines.filter(item => {
+    if (machine.groupId) return item.groupId === machine.groupId;
+    const area = catalog.areas.find(a => a.id === item.areaId);
+    return !item.groupId && area?.name.trim() === initialArea?.name.trim() &&
+      item.name === machine.name &&
+      ['overview','adjustment','instructions','tips','safety']
+        .every(key => item[key] === machine[key]);
+  }) : [];
+  const initialRelatedStores = [...new Set(relatedMachines.map(item =>
+    catalog.areas.find(area => area.id === item.areaId)?.storeId).filter(Boolean))];
+  const [selectedAreaName, setSelectedAreaName] = useState(initialArea?.name.trim() || '');
+  const [selectedStoreIds, setSelectedStoreIds] = useState(initialRelatedStores);
+  const groupIdRef = useRef(machine?.groupId || null);
   const createdTargetsRef = useRef(null);
   const [targetsLocked, setTargetsLocked] = useState(false);
   const [name, setName] = useState(machine?.name || '');
@@ -827,8 +837,6 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
     });
     setCropRequest(null);
   }
-  const shownAreas = catalog.areas.filter(a => a.storeId === storeId);
-  function onStoreChange(id) { setStoreId(id); setAreaId(catalog.areas.find(a => a.storeId === id)?.id || ''); }
   function toggleDestination(storeId, selected) {
     if (pending || targetsLocked) return;
     setSelectedStoreIds(previous => selected
@@ -847,118 +855,100 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
     setSelectedStoreIds(catalog.stores.slice(0, 20).map(store => store.id));
   }
   async function save() {
-    if (!name.trim() || (!machine && (!selectedAreaName || !destinationSelections.length)) ||
-      (machine && !catalog.areas.some(area => area.id === areaId)) ||
-      (!machine && destinationSelections.some(destination =>
-        destination.areaId !== null &&
-        !catalog.areas.some(area => area.id === destination.areaId &&
-          area.storeId === destination.storeId)))) {
-      notify('マシン名と登録先の店舗・エリアを指定してください。', true);
+    if (!name.trim() || !selectedAreaName || !selectedStoreIds.length) {
+      notify('エリア・店舗・マシン名を指定してください。', true);
       return;
     }
-    if (!machine && destinationSelections.length > 20) {
-      notify('登録先は20件以内にしてください。', true);
+    if (selectedStoreIds.length > 20) {
+      notify('登録先は最大20店舗です。', true);
       return;
     }
     if (createdTargetsRef.current &&
       (createdTargetsRef.current.length !== destinationSelections.length ||
-       createdTargetsRef.current.some((record, index) => record.storeId !== destinationSelections[index]?.storeId ||
-         (destinationSelections[index]?.areaId !== null &&
-           record.areaId !== destinationSelections[index].areaId)))) {
-      notify('登録途中のため、対象店舗を変更せずに再度保存してください。', true);
+        createdTargetsRef.current.some((row, index) =>
+          row.storeId !== destinationSelections[index]?.storeId))) {
+      notify('保存途中のため、店舗を変更せずに再度保存してください。', true);
       return;
     }
     try {
       setPending(true);
-      setProgress('マシン情報を保存しています…');
-      let newlyCreated = false;
-      if (!machine && !createdTargetsRef.current) {
-        // The original text is stored before uploading images, so readers never see
-        // image references whose KV objects have not been uploaded yet.
-        const initial = { ...fields };
-        for (const field of ['adjustment', 'instructions']) {
-          initial[field] = writeManualItems(readManualItems(fields[field]).map(item => ({
-            ...item, imageId: imagePreviews[item.imageId] ? null : item.imageId
-          })));
-        }
-        const result = await send('/api/admin/machines', 'POST', {
-          name: name.trim(), areaName: selectedAreaName,
-          storeSelections: destinationSelections, ...initial
-        });
-        if (!Array.isArray(result.ids) || result.ids.length !== destinationSelections.length ||
-          !Array.isArray(result.areaIds) || result.areaIds.length !== destinationSelections.length) {
-          throw new Error('登録結果の件数が一致しません。管理画面で登録先を確認してください。');
-        }
-        createdTargetsRef.current = result.ids.map((id, index) => ({
-          id, storeId: destinationSelections[index].storeId, areaId: result.areaIds[index]
-        }));
-        workingMachineId.current = result.ids[0];
-        setTargetsLocked(true);
-        newlyCreated = true;
+      setProgress('共通のマシン情報を保存しています…');
+      const uploadedPhotoIds = new Set(['adjustment','instructions'].flatMap(field =>
+        readManualItems(fields[field]).map(item => item.imageId)
+          .filter(imageId => imagePreviews[imageId])));
+      // Never publish references to photos until their bytes have been uploaded.
+      const staged = { ...fields };
+      for (const field of ['adjustment','instructions']) {
+        staged[field] = writeManualItems(readManualItems(fields[field]).map(item => ({
+          ...item, imageId: uploadedPhotoIds.has(item.imageId) ? null : item.imageId
+        })));
       }
-      const destinations = machine
-        ? [{ id: machine.id, areaId }]
-        : createdTargetsRef.current;
-      const referenced = new Set(['adjustment', 'instructions'].flatMap(field =>
-        readManualItems(fields[field]).map(item => item.imageId).filter(Boolean)));
-      const photos = [...referenced].filter(imageId => imagePreviews[imageId]);
-
-      for (let targetIndex = 0; targetIndex < destinations.length; targetIndex++) {
-        const target = destinations[targetIndex];
-        for (let imageIndex = 0; imageIndex < photos.length; imageIndex++) {
-          const imageId = photos[imageIndex];
-          setProgress('画像を保存しています（登録先 ' + (targetIndex + 1) + ' / ' +
-            destinations.length + '、画像 ' + (imageIndex + 1) + ' / ' + photos.length + '）');
-          await api(`/api/admin/machines/${target.id}/images/${imageId}`, {
-            method: 'PUT', headers: { 'content-type': 'image/jpeg' },
-            body: imagePreviews[imageId].blob
-          });
-        }
-        if (!newlyCreated || photos.length) {
-          setProgress('取扱説明書を保存しています… ' + (targetIndex + 1) + ' / ' + destinations.length);
-          await send(`/api/admin/machines/${target.id}`, 'PATCH', {
-            name: name.trim(), areaId: target.areaId, ...fields
-          });
-        }
-        if (thumbnailBlob) {
-          setProgress('選択画面用画像を保存しています… ' + (targetIndex + 1) + ' / ' + destinations.length);
-          await api(`/api/admin/machines/${target.id}/thumbnail`, {
-            method: 'PUT',
-            headers: { 'content-type': 'image/jpeg' },
-            body: thumbnailBlob
-          });
-        } else if (thumbnailRemoved && machine) {
-          await api(`/api/admin/machines/${target.id}/thumbnail`, { method: 'DELETE' });
-        }
+      const data = {
+        groupId: groupIdRef.current || undefined,
+        seedMachineId: machine && !groupIdRef.current ? machine.id : undefined,
+        name: name.trim(),areaName:selectedAreaName,
+        storeIds:destinationSelections.map(item => item.storeId)
+      };
+      const first = await send('/api/admin/manual-groups','POST',{
+        ...data,...(uploadedPhotoIds.size ? staged : fields)
+      });
+      if (!first.groupId || !Array.isArray(first.ids) ||
+          first.ids.length !== destinationSelections.length) {
+        throw new Error('保存結果を確認できませんでした。登録済み一覧をご確認ください。');
+      }
+      groupIdRef.current = first.groupId;
+      createdTargetsRef.current = first.ids.map((id,index) => ({
+        id,storeId:destinationSelections[index].storeId,areaId:first.areaIds[index]
+      }));
+      workingMachineId.current = first.ids[0];
+      setTargetsLocked(true);
+      const photos=[...uploadedPhotoIds];
+      for(let i=0;i<photos.length;i++){
+        const imageId=photos[i];
+        setProgress('共通画像を保存しています… '+(i+1)+' / '+photos.length);
+        await api('/api/admin/manual-groups/'+first.groupId+'/images/'+imageId,{
+          method:'PUT',headers:{'content-type':'image/jpeg'},
+          body:imagePreviews[imageId].blob
+        });
+      }
+      if(photos.length) {
+        setProgress('取扱説明書を更新しています…');
+        await send('/api/admin/manual-groups','POST',{
+          ...data,groupId:first.groupId,seedMachineId:undefined,...fields
+        });
+      }
+      if(thumbnailBlob){
+        setProgress('選択画面の画像を保存しています…');
+        await api('/api/admin/manual-groups/'+first.groupId+'/thumbnail',{
+          method:'PUT',headers:{'content-type':'image/jpeg'},body:thumbnailBlob
+        });
+      } else if(thumbnailRemoved && machine) {
+        await api('/api/admin/manual-groups/'+first.groupId+'/thumbnail',{method:'DELETE'});
       }
       await refresh();
       await tidy();
-      const previewsToRevoke = imagePreviewsRef.current;
-      imagePreviewsRef.current = {};
+      const oldPreviews=imagePreviewsRef.current;
+      imagePreviewsRef.current={};
       setImagePreviews({});
-      Object.values(previewsToRevoke).forEach(photo => URL.revokeObjectURL(photo.url));
-      if (thumbnailPreviewRef.current) URL.revokeObjectURL(thumbnailPreviewRef.current);
-      thumbnailPreviewRef.current = null;
+      Object.values(oldPreviews).forEach(photo=>URL.revokeObjectURL(photo.url));
+      if(thumbnailPreviewRef.current) URL.revokeObjectURL(thumbnailPreviewRef.current);
+      thumbnailPreviewRef.current=null;
       setThumbnailBlob(null);
       setThumbnailPreview('');
       setThumbnailRemoved(false);
-      const firstId = destinations[0].id;
-      notify(machine ? 'マシンの情報を保存しました。' :
-        destinations.length + '店舗に取扱説明書を登録しました。');
-      onSaved(firstId);
-    } catch (e) {
-      notify(`${e.message}（登録が一部完了している場合があります）`, true);
+      notify(machine ? '共通のマシン情報を更新しました。' :
+        destinationSelections.length+'店舗に共通マシンを登録しました。');
+      onSaved(first.ids[0]);
+    } catch(error) {
+      notify(error.message+'（保存状況を登録済み一覧でご確認ください）',true);
       await refresh();
     } finally {
       setPending(false);
       setProgress('');
     }
   }
-  return <div className="space-y-4"><div className="admin-card"><div className="flex justify-between items-center mb-5"><h3 className="card-title !mb-0">{machine ? 'マシンを編集' : 'マシンを追加'}</h3>{!inline && <button onClick={onCancel} className="icon-button" aria-label="編集画面を閉じる"><X size={19}/></button>}</div>
-    <div className="space-y-4">{machine ? <>
-      <Field title="店舗"><select className={fieldInput} value={storeId} onChange={e => onStoreChange(e.target.value)} disabled={pending}>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-      <Field title="エリア"><select className={fieldInput} value={areaId} onChange={e => setAreaId(e.target.value)} disabled={pending}>{shownAreas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
-    </> : <div className="manual-multistore">
+  return <div className="space-y-4"><div className="admin-card"><div className="flex justify-between items-center mb-5"><h3 className="card-title !mb-0">{machine ? '共通マシンを編集' : 'マシンを追加'}</h3>{!inline && <button onClick={onCancel} className="icon-button" aria-label="編集画面を閉じる"><X size={19}/></button>}</div>
+    <div className="space-y-4"><div className="manual-multistore">
       <Field title="① エリアを選択（1つ）">
         <select className={fieldInput} value={selectedAreaName}
           disabled={pending || targetsLocked}
@@ -1002,7 +992,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
         選択中：{destinationSelections.length}店舗・エリア「{selectedAreaName || '未選択'}」。
         各店舗の同じエリアに登録します。エリア未登録の店舗には、選択したエリアを自動作成します（最大20店舗）。
       </p>
-    </div>}<Field title="マシン名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：チェストプレス"/></Field>
+    </div><Field title="マシン名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：チェストプレス"/></Field>
     <div className="divider-line"/>
     {CONTENT_FIELDS.map(([key, title], i) => key === 'overview'
       ? <Field key={key} title={`${num(i + 1)} ${title}`}><textarea className={`${fieldInput} textarea`} rows={3} value={fields[key]} onChange={e => setFields(prev => ({ ...prev, [key]: e.target.value }))} maxLength={15000} placeholder={`${title}を入力してください`}/></Field>
@@ -1050,7 +1040,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
               }}>画像を削除</button>}
         </div>
       </div>
-    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'マシン情報を更新' : destinationSelections.length > 1 ? destinationSelections.length + '店舗に取説を登録' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}
+    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'すべての店舗に変更を保存' : destinationSelections.length > 1 ? destinationSelections.length + '店舗に共通マシンを登録' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}
     {cropRequest && <ManualImageCropper file={cropRequest.file} onApply={acceptCrop}
       square={cropRequest.kind === 'thumbnail'}
       onCancel={() => setCropRequest(null)}/>}
