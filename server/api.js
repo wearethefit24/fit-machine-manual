@@ -151,7 +151,44 @@ async function groupMachines(db, groupId) {
     JOIN areas a ON a.id=m.area_id WHERE mm.group_id=?
     ORDER BY a.store_id`).bind(groupId).all()).results;
 }
-async function catalog(db) {
+// Visibility is independent of the existing store/area/machine schemas.
+// Existing D1 databases are upgraded automatically by the first admin toggle.
+async function ensureVisibilityTable(db) {
+  await db.prepare(`CREATE TABLE IF NOT EXISTS visibility_settings (
+    entity_type TEXT NOT NULL CHECK(entity_type IN ('store','area','machine','group')),
+    entity_id TEXT NOT NULL,
+    is_public INTEGER NOT NULL DEFAULT 1 CHECK(is_public IN (0,1)),
+    PRIMARY KEY (entity_type,entity_id)
+  )`).run();
+}
+async function visibilityMap(db) {
+  try {
+    const rows = (await db.prepare('SELECT entity_type AS entityType,entity_id AS entityId,is_public AS isPublic FROM visibility_settings').all()).results;
+    return new Set(rows.filter(r => r.isPublic === 0).map(r => r.entityType + ':' + r.entityId));
+  } catch (error) {
+    if (/no such table:\s*visibility_settings/i.test(String(error?.message || error))) return new Set();
+    throw error;
+  }
+}
+function machinePublished(machine, areaById, storeById, hidden) {
+  const area = areaById.get(machine.areaId);
+  if (!area || hidden.has('area:' + area.id)) return false;
+  if (!storeById.has(area.storeId) || hidden.has('store:' + area.storeId)) return false;
+  return !(machine.groupId
+    ? hidden.has('group:' + machine.groupId)
+    : hidden.has('machine:' + machine.id));
+}
+async function isMachinePublic(db, machineId) {
+  if (!validId(machineId)) return false;
+  const rows = await db.prepare(`SELECT m.id,m.area_id AS areaId,a.store_id AS storeId
+    FROM machines m JOIN areas a ON a.id=m.area_id WHERE m.id=?`).bind(machineId).first();
+  if (!rows) return false;
+  const hidden = await visibilityMap(db);
+  if (hidden.has('store:' + rows.storeId) || hidden.has('area:' + rows.areaId)) return false;
+  const group = await groupForMachine(db, machineId);
+  return !hidden.has(group ? 'group:' + group.id : 'machine:' + machineId);
+}
+async function catalog(db, { admin = false } = {}) {
   const [storeRows, areaRows] = await Promise.all([
     db.prepare('SELECT id,name,position FROM stores ORDER BY position,name').all(),
     db.prepare('SELECT id,store_id AS storeId,name,position FROM areas ORDER BY position,name').all()
@@ -176,7 +213,27 @@ async function catalog(db) {
       overview,adjustment,instructions,tips,safety
       FROM machines ORDER BY position,name`).all();
   }
-  return {stores:storeRows.results,areas:areaRows.results,machines:machineRows.results};
+  const hidden = await visibilityMap(db);
+  const stores = storeRows.results.map(row => ({
+    ...row, isPublic: !hidden.has('store:' + row.id)
+  }));
+  const areas = areaRows.results.map(row => ({
+    ...row, isPublic: !hidden.has('area:' + row.id)
+  }));
+  const machines = machineRows.results.map(row => ({
+    ...row, isPublic: !(row.groupId
+      ? hidden.has('group:' + row.groupId)
+      : hidden.has('machine:' + row.id))
+  }));
+  if (admin) return {stores,areas,machines};
+  const publicStores = stores.filter(store => store.isPublic);
+  const publicStoreIds = new Set(publicStores.map(store=>store.id));
+  const publicAreas = areas.filter(area =>
+    area.isPublic && publicStoreIds.has(area.storeId));
+  const publicAreaIds = new Set(publicAreas.map(area=>area.id));
+  const publicMachines = machines.filter(machine =>
+    machine.isPublic && publicAreaIds.has(machine.areaId));
+  return {stores:publicStores,areas:publicAreas,machines:publicMachines};
 }
 // Track deletion independent of the video FK so a store can be removed without losing cleanup metadata.
 async function enqueueCleanup(db, videos) {
