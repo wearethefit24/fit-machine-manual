@@ -1313,3 +1313,44 @@ html, body {
   margin: 10px 0 2px 30px;
   line-height: 1.6;
 }
+
+/* Multiple destination areas per selected store */
+.manual-multistore-areas {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 2px 29px;
+  padding: 10px 12px;
+  border-left: 2px solid rgba(255,255,255,.35);
+  background: #111111;
+  border-radius: 0 10px 10px 0;
+}
+.manual-multistore-area-heading {
+  color: #d1d1d1;
+  font-size: 12px;
+  font-weight: 650;
+  margin: 0 0 3px;
+}
+.manual-multistore-area-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  width: 100%;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+.manual-multistore-area-choice input {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  accent-color: #fff;
+  cursor: pointer;
+}
+.manual-multistore-area-choice:has(input:disabled) {
+  opacity: .5;
+}
+@media (max-width: 360px) {
+  .manual-multistore-areas { margin-left: 27px; padding: 9px 10px; }
+}
