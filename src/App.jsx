@@ -769,7 +769,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   const relatedMachines = machine ? catalog.machines.filter(item => {
     if (machine.groupId) return item.groupId === machine.groupId;
     const area = catalog.areas.find(a => a.id === item.areaId);
-    return !item.groupId && area?.name.trim() === initialArea?.name.trim() &&
+    return !item.groupId && area &&
       item.name === machine.name &&
       ['overview','adjustment','instructions','tips','safety']
         .every(key => item[key] === machine[key]);
@@ -778,6 +778,12 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
     catalog.areas.find(area => area.id === item.areaId)?.storeId).filter(Boolean))];
   const [selectedAreaName, setSelectedAreaName] = useState(initialArea?.name.trim() || '');
   const [selectedStoreIds, setSelectedStoreIds] = useState(initialRelatedStores);
+  // Placement is independent for each store, while the manual itself stays shared.
+  const [storeAreaChoices, setStoreAreaChoices] = useState(() =>
+    Object.fromEntries(relatedMachines.map(item => {
+      const area = catalog.areas.find(entry => entry.id === item.areaId);
+      return area ? [area.storeId,area.id] : null;
+    }).filter(Boolean)));
   const groupIdRef = useRef(machine?.groupId || null);
   const createdTargetsRef = useRef(null);
   const [targetsLocked, setTargetsLocked] = useState(false);
@@ -837,25 +843,45 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
     });
     setCropRequest(null);
   }
-  function toggleDestination(storeId, selected) {
-    if (pending || targetsLocked) return;
-    setSelectedStoreIds(previous => selected
-      ? previous.includes(storeId) || previous.length >= 20 ? previous : [...previous, storeId]
-      : previous.filter(id => id !== storeId));
+  function defaultAreaChoice(storeId,areaName=selectedAreaName) {
+    if(!areaName) return '';
+    return catalog.areas.find(area =>
+      area.storeId===storeId && area.name.trim()===areaName)?.id || 'new:'+areaName;
   }
-  const destinationSelections = catalog.stores
-    .filter(store => selectedStoreIds.includes(store.id))
-    .map(store => ({
-      storeId: store.id,
-      areaId: catalog.areas.find(area =>
-        area.storeId === store.id && area.name.trim() === selectedAreaName)?.id ?? null
-    }));
+  function toggleDestination(storeId, selected) {
+    if(pending || targetsLocked) return;
+    if(selected && (!selectedAreaName || selectedStoreIds.length>=20)) return;
+    setSelectedStoreIds(previous => selected
+      ? previous.includes(storeId) ? previous : [...previous,storeId]
+      : previous.filter(id=>id!==storeId));
+    setStoreAreaChoices(previous => {
+      const next={...previous};
+      if(selected) next[storeId]=defaultAreaChoice(storeId);
+      else delete next[storeId];
+      return next;
+    });
+  }
+  const destinationSelections=catalog.stores
+    .filter(store=>selectedStoreIds.includes(store.id))
+    .map(store=>{
+      const choice=storeAreaChoices[store.id] || defaultAreaChoice(store.id);
+      return {
+        storeId:store.id,
+        areaId:choice && !choice.startsWith('new:') ? choice : null,
+        areaName:choice.startsWith('new:') ? choice.slice(4) : null
+      };
+    });
   function selectEveryStore() {
-    if (pending || targetsLocked || !selectedAreaName) return;
-    setSelectedStoreIds(catalog.stores.slice(0, 20).map(store => store.id));
+    if(pending || targetsLocked || !selectedAreaName) return;
+    const ids=catalog.stores.slice(0,20).map(store=>store.id);
+    setSelectedStoreIds(ids);
+    setStoreAreaChoices(previous=>Object.fromEntries(ids.map(storeId=>[
+      storeId,previous[storeId] || defaultAreaChoice(storeId)
+    ])));
   }
   async function save() {
-    if (!name.trim() || !selectedAreaName || !selectedStoreIds.length) {
+    if (!name.trim() || !selectedAreaName || !selectedStoreIds.length ||
+      destinationSelections.some(row=>!row.areaId && !row.areaName)) {
       notify('エリア・店舗・マシン名を指定してください。', true);
       return;
     }
@@ -865,8 +891,10 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
     }
     if (createdTargetsRef.current &&
       (createdTargetsRef.current.length !== destinationSelections.length ||
-        createdTargetsRef.current.some((row, index) =>
-          row.storeId !== destinationSelections[index]?.storeId))) {
+        createdTargetsRef.current.some((row,index) =>
+          row.storeId !== destinationSelections[index]?.storeId ||
+          row.areaChoice !== (destinationSelections[index]?.areaId ||
+            'new:'+destinationSelections[index]?.areaName)))) {
       notify('保存途中のため、店舗を変更せずに再度保存してください。', true);
       return;
     }
@@ -887,7 +915,8 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
         groupId: groupIdRef.current || undefined,
         seedMachineId: machine && !groupIdRef.current ? machine.id : undefined,
         name: name.trim(),areaName:selectedAreaName,
-        storeIds:destinationSelections.map(item => item.storeId)
+        storeIds:destinationSelections.map(item => item.storeId),
+        storeSelections:destinationSelections
       };
       const first = await send('/api/admin/manual-groups','POST',{
         ...data,...(uploadedPhotoIds.size ? staged : fields)
@@ -898,7 +927,9 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       }
       groupIdRef.current = first.groupId;
       createdTargetsRef.current = first.ids.map((id,index) => ({
-        id,storeId:destinationSelections[index].storeId,areaId:first.areaIds[index]
+        id,storeId:destinationSelections[index].storeId,areaId:first.areaIds[index],
+        areaChoice:destinationSelections[index].areaId ||
+          'new:'+destinationSelections[index].areaName
       }));
       workingMachineId.current = first.ids[0];
       setTargetsLocked(true);
@@ -949,12 +980,14 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   }
   return <div className="space-y-4"><div className="admin-card"><div className="flex justify-between items-center mb-5"><h3 className="card-title !mb-0">{machine ? '共通マシンを編集' : 'マシンを追加'}</h3>{!inline && <button onClick={onCancel} className="icon-button" aria-label="編集画面を閉じる"><X size={19}/></button>}</div>
     <div className="space-y-4"><div className="manual-multistore">
-      <Field title="① エリアを選択（1つ）">
+      <Field title={machine ? '① 新しく選ぶ店舗の基本エリア' : '① 基本エリアを選択（1つ）'}>
         <select className={fieldInput} value={selectedAreaName}
           disabled={pending || targetsLocked}
           onChange={event => {
-            setSelectedAreaName(event.target.value);
-            setSelectedStoreIds([]);
+            const nextName=event.target.value;
+            setSelectedAreaName(nextName);
+            if(!machine) setStoreAreaChoices(Object.fromEntries(
+              selectedStoreIds.map(storeId=>[storeId,defaultAreaChoice(storeId,nextName)])));
           }}>
           <option value="" disabled>{areaNames.length ? 'エリアを選択してください' : 'エリアを登録してください'}</option>
           {areaNames.map(areaName => <option key={areaName} value={areaName}>{areaName}</option>)}
@@ -970,27 +1003,42 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
           onClick={selectEveryStore}>すべて選択</button>
         <button type="button" className="manual-multistore-clear"
           disabled={pending || targetsLocked || !selectedStoreIds.length}
-          onClick={() => setSelectedStoreIds([])}>選択解除</button>
+          onClick={() => {setSelectedStoreIds([]);setStoreAreaChoices({});}}>選択解除</button>
       </div>
       <div className="manual-multistore-list">
         {catalog.stores.map(store => {
           const selected = selectedStoreIds.includes(store.id);
-          const matchingArea = catalog.areas.find(area =>
-            area.storeId === store.id && area.name.trim() === selectedAreaName);
-          return <label className="manual-multistore-row manual-multistore-checkbox" key={store.id}>
-            <input type="checkbox" checked={selected}
-              disabled={pending || targetsLocked || !selectedAreaName ||
-                (!selected && selectedStoreIds.length >= 20)}
-              onChange={event => toggleDestination(store.id, event.target.checked)}/>
-            <span>{store.name}</span>
-            {!matchingArea && selectedAreaName &&
-              <span className="manual-multistore-hint">エリア自動作成</span>}
-          </label>;
+          const storeAreas=catalog.areas.filter(area=>area.storeId===store.id);
+          const choice=storeAreaChoices[store.id] || defaultAreaChoice(store.id);
+          return <div className="manual-multistore-row" key={store.id}>
+            <label className="manual-multistore-checkbox">
+              <input type="checkbox" checked={selected}
+                disabled={pending || targetsLocked || !selectedAreaName ||
+                  (!selected && selectedStoreIds.length >= 20)}
+                onChange={event => toggleDestination(store.id,event.target.checked)}/>
+              <span>{store.name}</span>
+            </label>
+            {selected && <label className="manual-multistore-area">
+              <span>この店舗の配置エリア</span>
+              <select className={fieldInput} value={choice}
+                disabled={pending || targetsLocked}
+                onChange={event=>setStoreAreaChoices(previous=>({
+                  ...previous,[store.id]:event.target.value
+                }))}>
+                {storeAreas.map(area=><option key={area.id} value={area.id}>{area.name}</option>)}
+                {areaNames.filter(areaName=>!storeAreas.some(area=>
+                  area.name.trim()===areaName)).map(areaName=>
+                  <option key={'new:'+areaName} value={'new:'+areaName}>
+                    {areaName}（新規作成）
+                  </option>)}
+              </select>
+            </label>}
+          </div>;
         })}
       </div>
       <p className="manual-multistore-note">
-        選択中：{destinationSelections.length}店舗・エリア「{selectedAreaName || '未選択'}」。
-        各店舗の同じエリアに登録します。エリア未登録の店舗には、選択したエリアを自動作成します（最大20店舗）。
+        選択中：{destinationSelections.length}店舗。
+        配置エリアは店舗ごとに設定できます。マシン情報と画像は全店舗共通です。
       </p>
     </div><Field title="マシン名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：チェストプレス"/></Field>
     <div className="divider-line"/>
