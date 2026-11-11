@@ -773,10 +773,16 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
   const [progress, setProgress] = useState('');
   const [imagePreviews, setImagePreviews] = useState({});
   const imagePreviewsRef = useRef({});
+  const [thumbnailBlob, setThumbnailBlob] = useState(null);
+  const [thumbnailPreview, setThumbnailPreview] = useState('');
+  const [thumbnailAvailable, setThumbnailAvailable] = useState(false);
+  const [thumbnailRemoved, setThumbnailRemoved] = useState(false);
+  const thumbnailPreviewRef = useRef(null);
   const workingMachineId = useRef(machine?.id || null);
   const [cropRequest, setCropRequest] = useState(null);
   useEffect(() => () => {
     Object.values(imagePreviewsRef.current).forEach(photo => URL.revokeObjectURL(photo.url));
+    if (thumbnailPreviewRef.current) URL.revokeObjectURL(thumbnailPreviewRef.current);
   }, []);
   function beginCrop(field, index, chosenFile) {
     if (chosenFile.size > 20 * 1024 * 1024) {
@@ -785,8 +791,25 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
     }
     setCropRequest({ field, index, file: chosenFile });
   }
+  function beginThumbnailCrop(file) {
+    if (file.size > 20 * 1024 * 1024) {
+      notify('元の画像は20MiB以内のものを選択してください。', true);
+      return;
+    }
+    setCropRequest({ kind: 'thumbnail', file });
+  }
   function acceptCrop(blob) {
     if (!cropRequest) return;
+    if (cropRequest.kind === 'thumbnail') {
+      if (thumbnailPreviewRef.current) URL.revokeObjectURL(thumbnailPreviewRef.current);
+      const previewUrl = URL.createObjectURL(blob);
+      thumbnailPreviewRef.current = previewUrl;
+      setThumbnailPreview(previewUrl);
+      setThumbnailBlob(blob);
+      setThumbnailRemoved(false);
+      setCropRequest(null);
+      return;
+    }
     const imageId = crypto.randomUUID();
     const previewUrl = URL.createObjectURL(blob);
     const next = { ...imagePreviewsRef.current, [imageId]: { blob, url: previewUrl } };
@@ -924,6 +947,16 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
             name: name.trim(), areaId: target.areaId, ...fields
           });
         }
+        if (thumbnailBlob) {
+          setProgress('選択画面用画像を保存しています… ' + (targetIndex + 1) + ' / ' + destinations.length);
+          await api(`/api/admin/machines/${target.id}/thumbnail`, {
+            method: 'PUT',
+            headers: { 'content-type': 'image/jpeg' },
+            body: thumbnailBlob
+          });
+        } else if (thumbnailRemoved && machine) {
+          await api(`/api/admin/machines/${target.id}/thumbnail`, { method: 'DELETE' });
+        }
       }
       await refresh();
       await tidy();
@@ -931,6 +964,11 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       imagePreviewsRef.current = {};
       setImagePreviews({});
       Object.values(previewsToRevoke).forEach(photo => URL.revokeObjectURL(photo.url));
+      if (thumbnailPreviewRef.current) URL.revokeObjectURL(thumbnailPreviewRef.current);
+      thumbnailPreviewRef.current = null;
+      setThumbnailBlob(null);
+      setThumbnailPreview('');
+      setThumbnailRemoved(false);
       const firstId = destinations[0].id;
       notify(machine ? 'マシンの情報を保存しました。' :
         destinations.length + '件の取扱説明書を登録しました。');
@@ -996,8 +1034,50 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       : <ManualItemsEditor key={key} title={`${num(i + 1)} ${title}`} field={key}
           value={fields[key]} onChange={value => setFields(prev => ({ ...prev, [key]: value }))}
           onCrop={beginCrop} imagePreviews={imagePreviews} machineId={workingMachineId.current}/>)}
+      <div className="machine-thumbnail-settings">
+        <div className="field-label">選択画面用画像（正方形・1:1）</div>
+        <p className="machine-thumbnail-help">マシン選択画面の四角い画像です。写真を動かしたり拡大したりして正方形に切り抜けます。</p>
+        <div className="machine-thumbnail-preview">
+          {thumbnailPreview
+            ? <img src={thumbnailPreview} alt="選択画面用画像のプレビュー"/>
+            : machine && !thumbnailRemoved
+              ? <img src={'/api/machine-thumbnail/' + machine.id} alt="登録済みの選択画面用画像"
+                  onLoad={() => setThumbnailAvailable(true)}
+                  onError={() => setThumbnailAvailable(false)}
+                  style={{ display: thumbnailAvailable ? 'block' : 'none' }}/>
+              : null}
+          {!thumbnailPreview && (!machine || thumbnailRemoved || !thumbnailAvailable) &&
+            <div className="machine-thumbnail-placeholder" aria-hidden="true">
+              <ImagePlus size={24}/><span>画像未登録</span>
+            </div>}
+        </div>
+        <div className="manual-item-photo-buttons">
+          <label className="manual-image-pick">
+            <ImagePlus size={16}/>{thumbnailPreview || (thumbnailAvailable && !thumbnailRemoved)
+              ? '画像を変更' : '画像を追加（1:1）'}
+            <input type="file" accept="image/*" className="sr-only"
+              disabled={pending}
+              onChange={e => {
+                const selected = e.target.files?.[0];
+                if (selected) beginThumbnailCrop(selected);
+                e.target.value = '';
+              }}/>
+          </label>
+          {(thumbnailPreview || (thumbnailAvailable && !thumbnailRemoved)) &&
+            <button type="button" className="manual-image-remove" disabled={pending}
+              onClick={() => {
+                if (thumbnailPreviewRef.current) URL.revokeObjectURL(thumbnailPreviewRef.current);
+                thumbnailPreviewRef.current = null;
+                setThumbnailPreview('');
+                setThumbnailBlob(null);
+                setThumbnailRemoved(true);
+                setThumbnailAvailable(false);
+              }}>画像を削除</button>}
+        </div>
+      </div>
     </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'マシン情報を更新' : destinationSelections.length > 1 ? destinationSelections.length + 'エリアに取説を登録' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}
     {cropRequest && <ManualImageCropper file={cropRequest.file} onApply={acceptCrop}
+      square={cropRequest.kind === 'thumbnail'}
       onCancel={() => setCropRequest(null)}/>}
   </div>;
 }
