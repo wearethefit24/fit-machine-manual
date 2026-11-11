@@ -749,7 +749,7 @@ function ManualItemsEditor({ title, field, value, onChange, onCrop, imagePreview
   </div>;
 }
 
-function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCancel, notify, tidy }) {
+function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCancel, notify, tidy, inline = false }) {
   const initialArea = catalog.areas.find(a => a.id === (machine?.areaId || initialAreaId)) || catalog.areas[0];
   const [storeId, setStoreId] = useState(initialArea?.storeId || '');
   const [areaId, setAreaId] = useState(initialArea?.id || '');
@@ -934,7 +934,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       setProgress('');
     }
   }
-  return <div className="space-y-4"><div className="admin-card"><div className="flex justify-between items-center mb-5"><h3 className="card-title !mb-0">{machine ? 'マシンを編集' : '新しいマシンを登録'}</h3><button onClick={onCancel} className="icon-button"><X size={19}/></button></div>
+  return <div className="space-y-4"><div className="admin-card"><div className="flex justify-between items-center mb-5"><h3 className="card-title !mb-0">{machine ? 'マシンを編集' : 'マシンを追加'}</h3>{!inline && <button onClick={onCancel} className="icon-button" aria-label="編集画面を閉じる"><X size={19}/></button>}</div>
     <div className="space-y-4">{machine ? <>
       <Field title="店舗"><select className={fieldInput} value={storeId} onChange={e => onStoreChange(e.target.value)} disabled={pending}>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
       <Field title="エリア"><select className={fieldInput} value={areaId} onChange={e => setAreaId(e.target.value)} disabled={pending}>{shownAreas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
@@ -996,6 +996,7 @@ function MachinesAdmin({ catalog, refresh, notify, tidy }) {
   const [storeFilter, setStoreFilter] = useState('');
   const [areaFilter, setAreaFilter] = useState('');
   const [selectedId, setSelectedId] = useState(undefined);
+  const [createKey, setCreateKey] = useState(0);
   const selectedStore = catalog.stores.find(s => s.id === storeFilter) || catalog.stores[0];
   const areas = catalog.areas.filter(a => a.storeId === selectedStore?.id);
   const selectedArea = areas.find(a => a.id === areaFilter) || areas[0];
@@ -1003,22 +1004,81 @@ function MachinesAdmin({ catalog, refresh, notify, tidy }) {
   const selectedMachine = catalog.machines.find(m => m.id === selectedId);
   const editing = selectedId !== undefined;
   async function move(machine, amount) {
-    const current = machines.findIndex(m => m.id === machine.id); const next = current + amount;
+    const current = machines.findIndex(m => m.id === machine.id);
+    const next = current + amount;
     if (next < 0 || next >= machines.length) return;
-    const ids = machines.map(m => m.id); [ids[current], ids[next]] = [ids[next], ids[current]];
-    try { await send(`/api/admin/areas/${selectedArea.id}/reorder`, 'POST', { ids }); await refresh(); notify('並び順を変更しました。'); } catch (e) { notify(e.message, true); }
+    const ids = machines.map(m => m.id);
+    [ids[current], ids[next]] = [ids[next], ids[current]];
+    try {
+      await send(`/api/admin/areas/${selectedArea.id}/reorder`, 'POST', { ids });
+      await refresh();
+      notify('並び順を変更しました。');
+    } catch (e) { notify(e.message, true); }
   }
   async function remove(m) {
     if (!window.confirm(`「${m.name}」を削除しますか？説明画像が削除され、QRコードの閲覧先も無効になります。`)) return;
-    try { await api(`/api/admin/machines/${m.id}`, { method: 'DELETE' }); if (selectedId === m.id) setSelectedId(undefined); await refresh(); await tidy(); notify('マシンを削除しました。'); } catch (e) { notify(e.message, true); }
+    try {
+      await api(`/api/admin/machines/${m.id}`, { method: 'DELETE' });
+      if (selectedId === m.id) setSelectedId(undefined);
+      await refresh();
+      await tidy();
+      notify('マシンを削除しました。');
+    } catch (e) { notify(e.message, true); }
   }
-  if (editing) return <div className="space-y-4"><button className="back-btn" onClick={() => setSelectedId(undefined)}><ArrowLeft size={18}/>マシン一覧</button><MachineEditor key={selectedId || 'new'} machine={selectedMachine} catalog={catalog} initialAreaId={selectedArea?.id} refresh={refresh} onSaved={id => setSelectedId(id)} onCancel={() => setSelectedId(undefined)} notify={notify} tidy={tidy}/></div>;
-  return <div className="space-y-4"><div className="admin-card space-y-4"><div className="flex justify-between items-center"><h3 className="card-title !mb-0">マシン管理</h3><button className="btn btn-primary btn-sm" onClick={() => setSelectedId(null)} disabled={!catalog.stores.length}><Plus size={17}/>追加</button></div>
-    <Field title="店舗を選択"><select className={fieldInput} value={selectedStore?.id || ''} onChange={e => { setStoreFilter(e.target.value); setAreaFilter(''); }}>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-    <Field title="エリアを選択"><select className={fieldInput} value={selectedArea?.id || ''} onChange={e => setAreaFilter(e.target.value)}>{areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field></div>
-    <div className="admin-card"><div className="flex justify-between items-center mb-4"><h3 className="card-title !mb-0">表示順 <span className="count">{machines.length}</span></h3><span className="text-xs text-neutral-300">↑ ↓ で並び替え</span></div>
-    {machines.length ? machines.map((m, i) => <div key={m.id} className="machine-row"><div className="flex flex-col gap-1.5"><button aria-label={`${m.name}を上へ`} disabled={i === 0} className="arrow-button" onClick={() => move(m,-1)}><ArrowUp size={17}/></button><button aria-label={`${m.name}を下へ`} disabled={i === machines.length - 1} className="arrow-button" onClick={() => move(m,1)}><ArrowDown size={17}/></button></div><span className="text-xs font-bold text-neutral-300 w-6 text-center">{num(i)}</span><div className="flex-1 min-w-0"><div className="font-semibold text-white truncate">{m.name}</div><div className="text-xs text-neutral-300 mt-1">取扱説明書あり</div></div><SmallActions onEdit={() => setSelectedId(m.id)} onDelete={() => remove(m)}/></div>) : <Empty title="マシンがありません" description="店舗・エリアを追加してからマシンを登録してください。"/>}
-    </div></div>;
+  if (editing) return <div className="space-y-4">
+    <button className="back-btn" onClick={() => setSelectedId(undefined)}>
+      <ArrowLeft size={18}/>マシン一覧
+    </button>
+    <MachineEditor key={selectedId} machine={selectedMachine} catalog={catalog}
+      initialAreaId={selectedArea?.id} refresh={refresh}
+      onSaved={() => setSelectedId(undefined)} onCancel={() => setSelectedId(undefined)}
+      notify={notify} tidy={tidy}/>
+  </div>;
+  return <div className="space-y-4">
+    {catalog.stores.length
+      ? <MachineEditor key={'create-' + createKey} inline catalog={catalog}
+          initialAreaId={selectedArea?.id} refresh={refresh}
+          onSaved={() => setCreateKey(key => key + 1)}
+          onCancel={() => {}} notify={notify} tidy={tidy}/>
+      : <div className="admin-card">
+          <h3 className="card-title">マシンを追加</h3>
+          <Empty title="店舗がありません" description="先に「店舗」タブから店舗を登録してください。"/>
+        </div>}
+    <div className="admin-card space-y-4">
+      <h3 className="card-title">登録済みマシン <span className="count">{catalog.machines.length}</span></h3>
+      <Field title="店舗を選択">
+        <select className={fieldInput} value={selectedStore?.id || ''}
+          onChange={e => { setStoreFilter(e.target.value); setAreaFilter(''); }}>
+          {catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </Field>
+      <Field title="エリアを選択">
+        <select className={fieldInput} value={selectedArea?.id || ''}
+          onChange={e => setAreaFilter(e.target.value)}>
+          {areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+      </Field>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold text-white">表示順</span>
+        <span className="text-xs text-neutral-300">{machines.length} 台・↑ ↓ で並び替え</span>
+      </div>
+      {machines.length ? machines.map((m, i) => <div key={m.id} className="machine-row">
+        <div className="flex flex-col gap-1.5">
+          <button aria-label={m.name + 'を上へ'} disabled={i === 0}
+            className="arrow-button" onClick={() => move(m,-1)}><ArrowUp size={17}/></button>
+          <button aria-label={m.name + 'を下へ'} disabled={i === machines.length - 1}
+            className="arrow-button" onClick={() => move(m,1)}><ArrowDown size={17}/></button>
+        </div>
+        <span className="text-xs font-bold text-neutral-300 w-6 text-center">{num(i)}</span>
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-white truncate">{m.name}</div>
+          <div className="text-xs text-neutral-300 mt-1">取扱説明書あり</div>
+        </div>
+        <SmallActions onEdit={() => setSelectedId(m.id)} onDelete={() => remove(m)}/>
+      </div>) : <Empty title="マシンがありません"
+        description="選択した店舗・エリアにはマシンが登録されていません。"/>}
+    </div>
+  </div>;
 }
 function Login({ onLogin, notify }) {
   const [password, setPassword] = useState(''); const [pending, setPending] = useState(false);
