@@ -235,13 +235,24 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
   if (type === 'areas') {
     if (!id && method === 'POST') {
       const d = await body(req);
-      if (!validName(d.name) || !validId(d.storeId)) return fail('店舗とエリア名を指定してください。');
-      const store = await db.prepare('SELECT id FROM stores WHERE id=?').bind(d.storeId).first();
-      if (!store) return fail('店舗がありません。', 404);
-      const newId = crypto.randomUUID();
-      await db.prepare('INSERT INTO areas(id,store_id,name,position) VALUES(?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM areas WHERE store_id=?))')
-        .bind(newId, d.storeId, d.name.trim(), d.storeId).run();
-      return json({ ok: true, id: newId }, 201);
+      if (!validName(d.name)) return fail('エリア名を入力してください。');
+      // One independent area per selected store, created together in a D1 transaction.
+      // Keep supporting storeId for older clients.
+      const storeIds = d.storeIds === undefined ? [d.storeId] : d.storeIds;
+      if (!Array.isArray(storeIds) || !storeIds.length || storeIds.length > 20 ||
+          storeIds.some(storeId => !validId(storeId)) ||
+          new Set(storeIds).size !== storeIds.length) {
+        return fail('登録先の店舗を1～20件、重複せずに選択してください。');
+      }
+      const found = (await db.prepare(`SELECT id FROM stores WHERE id IN (${storeIds.map(() => '?').join(',')})`)
+        .bind(...storeIds).all()).results;
+      if (found.length !== storeIds.length) return fail('選択した店舗が見つかりません。', 404);
+      const ids = storeIds.map(() => crypto.randomUUID());
+      await db.batch(storeIds.map((storeId, index) =>
+        db.prepare('INSERT INTO areas(id,store_id,name,position) VALUES(?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM areas WHERE store_id=?))')
+          .bind(ids[index], storeId, d.name.trim(), storeId)
+      ));
+      return json({ ok: true, id: ids[0], ids, storeIds }, 201);
     }
     if (!validId(id)) return fail('エリアIDが不正です。');
     if (action === 'reorder' && method === 'POST') {
