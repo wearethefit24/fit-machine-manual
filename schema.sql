@@ -64,3 +64,23 @@ CREATE TABLE IF NOT EXISTS video_cleanup_jobs (
   chunk_count INTEGER NOT NULL,
   next_index INTEGER NOT NULL DEFAULT 0
 );
+
+-- A manual's content is maintained once and may be assigned to multiple stores.
+-- Existing standalone machine rows remain readable without backfilling data.
+CREATE TABLE IF NOT EXISTS machine_manual_groups (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  overview TEXT NOT NULL DEFAULT '',
+  adjustment TEXT NOT NULL DEFAULT '',
+  instructions TEXT NOT NULL DEFAULT '',
+  tips TEXT NOT NULL DEFAULT '',
+  safety TEXT NOT NULL DEFAULT '',
+  thumbnail_state INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS machine_manual_members (
+  machine_id TEXT PRIMARY KEY REFERENCES machines(id) ON DELETE CASCADE,
+  group_id TEXT NOT NULL REFERENCES machine_manual_groups(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_machine_manual_members_group ON machine_manual_members(group_id);
