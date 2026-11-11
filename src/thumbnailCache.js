@@ -3,13 +3,18 @@
 // cannot make repeat navigation fast. Keep a small in-memory blob URL cache
 // rather than weakening server-side access controls.
 const cached = new Map();
+const visible = new Map();
 const SUCCESS_MS = 90_000;
 const FAILURE_MS = 8_000;
 const MAX_ENTRIES = 80;
 
 function cachedRecord(id) {
   const record = cached.get(id);
-  return record && (record.pending || record.until > Date.now()) ? record : null;
+  if (!record || (!record.pending && record.until <= Date.now())) return null;
+  // Most recently used IDs should be the last to leave the cache.
+  cached.delete(id);
+  cached.set(id,record);
+  return record;
 }
 
 export function peekThumbnail(id) {
@@ -18,12 +23,23 @@ export function peekThumbnail(id) {
 
 function pruneCache() {
   if (cached.size <= MAX_ENTRIES) return;
-  // Do not revoke visible images while a screen is mounted: retain URLs
-  // until this page unloads, limiting the number of actively prefetched IDs.
   for (const [id,record] of cached) {
     if (cached.size <= MAX_ENTRIES) break;
-    if (!record.pending && !record.url) cached.delete(id);
+    // A mounted image must not lose access to its blob URL.
+    if (record.pending || visible.has(id)) continue;
+    cached.delete(id);
+    if (record.url) URL.revokeObjectURL(record.url);
   }
+}
+
+export function retainThumbnail(id) {
+  visible.set(id,(visible.get(id)||0)+1);
+}
+export function releaseThumbnail(id) {
+  const count=visible.get(id)||0;
+  if (count<=1) visible.delete(id);
+  else visible.set(id,count-1);
+  pruneCache();
 }
 
 export function loadThumbnail(id) {
