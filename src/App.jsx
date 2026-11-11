@@ -143,13 +143,15 @@ function QrScanner({ machines, cameraRequest, onClose, onFound, onRetry }) {
         const permissionDenied = ['NotAllowedError','PermissionDeniedError','SecurityError'].includes(error?.name);
         const notFound = ['NotFoundError','DevicesNotFoundError'].includes(error?.name);
         const unavailable = ['NotReadableError','TrackStartError'].includes(error?.name);
-        setMessage(permissionDenied
-          ? 'カメラが許可されていません。ブラウザのカメラ設定で「許可」を選択してください。'
-          : notFound
-            ? '利用できるカメラが見つかりません。端末のカメラを確認してください。'
-            : unavailable
-              ? 'ほかのアプリがカメラを使用中の可能性があります。閉じてから再試行してください。'
-              : 'カメラを起動できませんでした。通信状態とカメラの使用許可をご確認ください。');
+        setMessage(!navigator.mediaDevices?.getUserMedia
+          ? 'このブラウザではカメラを利用できません。HTTPSのページをSafariまたはChromeで開いてください。'
+          : permissionDenied
+            ? 'カメラが許可されていません。ブラウザのカメラ設定で「許可」を選択してください。'
+            : notFound
+              ? '利用できるカメラが見つかりません。端末のカメラを確認してください。'
+              : unavailable
+                ? 'ほかのアプリがカメラを使用中の可能性があります。閉じてから再試行してください。'
+                : 'カメラを起動できませんでした。通信状態とカメラの使用許可をご確認ください。');
         setRetryable(true);
       }
     })();
