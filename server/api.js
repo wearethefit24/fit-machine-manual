@@ -342,11 +342,19 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
       const d = await body(req);
       if (!validName(d.name) || !validName(d.areaName))
         return fail('マシン名とエリアを指定してください。');
-      const storeIds = d.storeIds;
-      if (!Array.isArray(storeIds) || !storeIds.length || storeIds.length > 20 ||
-          storeIds.some(value => !validId(value)) ||
-          new Set(storeIds).size !== storeIds.length)
-        return fail('店舗を1～20件、重複せずに選択してください。');
+      // New editor sends one placement per store, with independent area choices.
+      // Keep the former storeIds + areaName API valid for old clients.
+      const supplied = d.storeSelections !== undefined ? d.storeSelections :
+        Array.isArray(d.storeIds) ? d.storeIds.map(storeId=>({
+          storeId,areaId:null,areaName:d.areaName
+        })) : null;
+      if (!Array.isArray(supplied) || !supplied.length || supplied.length > 20 ||
+          supplied.some(row=>!row || !validId(row.storeId) ||
+            (row.areaId != null && !validId(row.areaId)) ||
+            (row.areaId == null && !validName(row.areaName))) ||
+          new Set(supplied.map(row=>row.storeId)).size !== supplied.length)
+        return fail('店舗と各店舗の配置エリアを1～20件指定してください。');
+      const storeIds=supplied.map(row=>row.storeId);
       const v = fields(d);
       await ensureManualGroupTables(db);
       const stores = (await db.prepare(`SELECT id FROM stores WHERE id IN (${storeIds.map(() => '?').join(',')})`)
@@ -379,10 +387,10 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
           const candidates = (await db.prepare(`SELECT m.id,m.area_id AS areaId,a.store_id AS storeId,a.name AS areaName
             FROM machines m JOIN areas a ON m.area_id=a.id
             LEFT JOIN machine_manual_members mm ON mm.machine_id=m.id
-            WHERE mm.machine_id IS NULL AND m.name=? AND a.name=?
+            WHERE mm.machine_id IS NULL AND m.name=?
             AND m.overview=? AND m.adjustment=? AND m.instructions=?
             AND m.tips=? AND m.safety=? ORDER BY m.created_at,m.id`)
-            .bind(base.name,base.areaName,base.overview,base.adjustment,
+            .bind(base.name,base.overview,base.adjustment,
               base.instructions,base.tips,base.safety).all()).results;
           const storeSet = new Set();
           current = candidates.filter(item => {
@@ -397,14 +405,29 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
         }
       }
       if (!groupId) groupId=crypto.randomUUID();
-      const matching = (await db.prepare(`SELECT id,store_id AS storeId FROM areas
-        WHERE name=? AND store_id IN (${storeIds.map(() => '?').join(',')})
-        ORDER BY position,id`).bind(d.areaName.trim(),...storeIds).all()).results;
-      const matchingMap = new Map();
-      for(const row of matching) if(!matchingMap.has(row.storeId)) matchingMap.set(row.storeId,row.id);
-      const generatedAreas = storeIds.filter(storeId=>!matchingMap.has(storeId))
-        .map(storeId=>({storeId,areaId:crypto.randomUUID()}));
-      for(const area of generatedAreas) matchingMap.set(area.storeId,area.areaId);
+      // Resolve each store's chosen area without changing other stores' placement.
+      const areaRows=(await db.prepare(`SELECT id,store_id AS storeId,name
+        FROM areas WHERE store_id IN (${storeIds.map(()=>'?').join(',')})
+        ORDER BY position,id`).bind(...storeIds).all()).results;
+      const matchingMap=new Map();
+      const generatedAreas=[];
+      for(const row of supplied){
+        const available=areaRows.filter(area=>area.storeId===row.storeId);
+        if(row.areaId != null){
+          const existing=available.find(area=>area.id===row.areaId);
+          if(!existing) return fail('店舗のエリアが変更されました。再読み込みしてください。',409);
+          matchingMap.set(row.storeId,existing.id);
+        } else {
+          const areaName=row.areaName.trim();
+          const existing=available.find(area=>area.name.trim()===areaName);
+          if(existing) matchingMap.set(row.storeId,existing.id);
+          else {
+            const areaId=crypto.randomUUID();
+            generatedAreas.push({storeId:row.storeId,areaId,areaName});
+            matchingMap.set(row.storeId,areaId);
+          }
+        }
+      }
       const currentByStore = new Map(current.map(item=>[item.storeId,item]));
       const reusableByStore = new Map();
       // Explicitly selecting another store while editing can link its existing
@@ -413,10 +436,10 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
         const options=(await db.prepare(`SELECT m.id,a.store_id AS storeId FROM machines m
           JOIN areas a ON a.id=m.area_id
           LEFT JOIN machine_manual_members mm ON mm.machine_id=m.id
-          WHERE mm.machine_id IS NULL AND m.name=? AND a.name=?
+          WHERE mm.machine_id IS NULL AND m.name=?
           AND a.store_id IN (${storeIds.map(() => '?').join(',')})
           ORDER BY m.created_at,m.id`)
-          .bind(originalMachineName,d.areaName.trim(),...storeIds).all()).results;
+          .bind(originalMachineName,...storeIds).all()).results;
         const byStore=new Map();
         for(const row of options){
           if(!byStore.has(row.storeId)) byStore.set(row.storeId,[]);
@@ -449,7 +472,7 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
       for(const area of generatedAreas) statements.push(
         db.prepare(`INSERT INTO areas(id,store_id,name,position)
           VALUES(?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM areas WHERE store_id=?))`)
-          .bind(area.areaId,area.storeId,d.areaName.trim(),area.storeId));
+          .bind(area.areaId,area.storeId,area.areaName,area.storeId));
       for(const placement of placements){
         if(currentByStore.get(placement.storeId)?.id===placement.machineId ||
            reusableByStore.get(placement.storeId)===placement.machineId){
