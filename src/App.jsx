@@ -457,19 +457,120 @@ function StoresAdmin({ catalog, refresh, notify, tidy }) {
   <div className="admin-card"><h3 className="card-title">登録済み店舗 <span className="count">{catalog.stores.length}</span></h3>{catalog.stores.length ? catalog.stores.map(s => <div key={s.id} className="admin-row"><span className="row-icon"><MapPin size={18}/></span><div className="flex-1 min-w-0"><p className="font-medium text-white truncate">{s.name}</p><p className="text-xs text-neutral-300 mt-0.5">{catalog.areas.filter(a => a.storeId === s.id).length} エリア</p></div><SmallActions onEdit={() => { setEditing(s.id); setName(s.name); }} onDelete={() => remove(s)}/></div>) : <Empty title="店舗はまだありません" description="まず店舗を登録してください。"/>}</div></div>;
 }
 function AreasAdmin({ catalog, refresh, notify, tidy }) {
-  const [editing, setEditing] = useState(null); const [name, setName] = useState(''); const [storeId, setStoreId] = useState(''); const [pending, setPending] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [name, setName] = useState('');
+  const [storeId, setStoreId] = useState('');
+  const [selectedStoreIds, setSelectedStoreIds] = useState([]);
+  const [pending, setPending] = useState(false);
   const selectedStore = storeId || catalog.stores[0]?.id || '';
-  function reset() { setEditing(null); setName(''); setStoreId(''); }
+  function reset() {
+    setEditing(null);
+    setName('');
+    setStoreId('');
+    setSelectedStoreIds([]);
+  }
+  function toggleStore(id, checked) {
+    setSelectedStoreIds(previous => checked
+      ? previous.includes(id) || previous.length >= 20 ? previous : [...previous, id]
+      : previous.filter(value => value !== id));
+  }
   async function save() {
-    try { setPending(true); await send(editing ? `/api/admin/areas/${editing}` : '/api/admin/areas', editing ? 'PATCH' : 'POST', { name, storeId: selectedStore }); await refresh(); reset(); notify('エリアを保存しました。'); }
-    catch (e) { notify(e.message, true); } finally { setPending(false); }
+    if (!name.trim()) { notify('エリア名を入力してください。', true); return; }
+    if (!editing && !selectedStoreIds.length) {
+      notify('登録する店舗を1つ以上選択してください。', true);
+      return;
+    }
+    try {
+      setPending(true);
+      if (editing) {
+        await send(`/api/admin/areas/${editing}`, 'PATCH',
+          { name: name.trim(), storeId: selectedStore });
+        notify('エリアを更新しました。');
+      } else {
+        const result = await send('/api/admin/areas', 'POST',
+          { name: name.trim(), storeIds: selectedStoreIds });
+        if (!Array.isArray(result.ids) || result.ids.length !== selectedStoreIds.length) {
+          throw new Error('エリア登録件数を確認できませんでした。再登録せず一覧をご確認ください。');
+        }
+        notify(result.ids.length + '店舗にエリアを登録しました。');
+      }
+      await refresh();
+      reset();
+    } catch (e) { notify(e.message, true); }
+    finally { setPending(false); }
   }
   async function remove(a) {
     if (!window.confirm(`「${a.name}」を削除しますか？所属するマシンと説明画像も削除されます。`)) return;
-    try { await api(`/api/admin/areas/${a.id}`, { method: 'DELETE' }); await refresh(); await tidy(); if (editing === a.id) reset(); notify('エリアを削除しました。'); } catch (e) { notify(e.message, true); }
+    try {
+      await api(`/api/admin/areas/${a.id}`, { method: 'DELETE' });
+      await refresh();
+      await tidy();
+      if (editing === a.id) reset();
+      notify('エリアを削除しました。');
+    } catch (e) { notify(e.message, true); }
   }
-  return <div className="space-y-4"><div className="admin-card"><h3 className="card-title">{editing ? 'エリアを編集' : 'エリアを追加'}</h3><div className="space-y-4"><Field title="店舗"><select className={fieldInput} value={selectedStore} onChange={e => setStoreId(e.target.value)}><option value="">店舗を選択</option>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field><Field title="エリア名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：有酸素エリア"/></Field></div><div className="flex gap-2 mt-4"><Action pending={pending || !catalog.stores.length} onClick={save} className="flex-1">{editing ? '変更を保存' : 'エリアを登録'}</Action>{editing && <button className="btn btn-secondary" onClick={reset}>取消</button>}</div></div>
-  <div className="admin-card"><h3 className="card-title">登録済みエリア <span className="count">{catalog.areas.length}</span></h3>{catalog.areas.length ? catalog.areas.map(a => <div className="admin-row" key={a.id}><span className="row-icon"><Layers3 size={18}/></span><div className="flex-1 min-w-0"><p className="font-medium text-white truncate">{a.name}</p><p className="text-xs text-neutral-300 mt-0.5">{catalog.stores.find(s => s.id === a.storeId)?.name || ''} ・ {catalog.machines.filter(m => m.areaId === a.id).length} 台</p></div><SmallActions onEdit={() => { setEditing(a.id); setName(a.name); setStoreId(a.storeId); }} onDelete={() => remove(a)}/></div>) : <Empty title="エリアはまだありません" description="店舗を登録した後、エリアを追加してください。"/>}</div></div>;
+  return <div className="space-y-4">
+    <div className="admin-card">
+      <h3 className="card-title">{editing ? 'エリアを編集' : 'エリアを追加'}</h3>
+      <div className="space-y-4">
+        {editing ? <Field title="店舗">
+          <select className={fieldInput} value={selectedStore}
+            disabled={pending} onChange={event => setStoreId(event.target.value)}>
+            {catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field> : <div className="manual-multistore">
+          <div className="manual-multistore-heading">
+            <div className="field-label">登録する店舗（複数選択可）</div>
+            <button type="button" className="manual-multistore-select-all"
+              disabled={pending || !catalog.stores.length}
+              onClick={() => setSelectedStoreIds(catalog.stores.slice(0,20).map(s => s.id))}>すべて選択</button>
+            <button type="button" className="manual-multistore-clear"
+              disabled={pending || !selectedStoreIds.length}
+              onClick={() => setSelectedStoreIds([])}>選択解除</button>
+          </div>
+          <div className="manual-multistore-list">
+            {catalog.stores.map(store => <label key={store.id}
+              className="manual-multistore-row manual-multistore-checkbox">
+              <input type="checkbox"
+                checked={selectedStoreIds.includes(store.id)}
+                disabled={pending || (!selectedStoreIds.includes(store.id) && selectedStoreIds.length >= 20)}
+                onChange={event => toggleStore(store.id, event.target.checked)}/>
+              <span>{store.name}</span>
+            </label>)}
+          </div>
+          <p className="manual-multistore-note">選択中：{selectedStoreIds.length}店舗（最大20店舗）。選んだ店舗に同じ名前のエリアを登録します。</p>
+        </div>}
+        <Field title="エリア名">
+          <input className={fieldInput} value={name} disabled={pending}
+            onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：有酸素エリア"/>
+        </Field>
+      </div>
+      <div className="flex gap-2 mt-4">
+        <Action pending={pending || !catalog.stores.length} onClick={save} className="flex-1">
+          {editing ? '変更を保存' : selectedStoreIds.length > 1
+            ? selectedStoreIds.length + '店舗にエリアを登録' : 'エリアを登録'}
+        </Action>
+        {editing && <button className="btn btn-secondary" disabled={pending} onClick={reset}>取消</button>}
+      </div>
+    </div>
+    <div className="admin-card">
+      <h3 className="card-title">登録済みエリア <span className="count">{catalog.areas.length}</span></h3>
+      {catalog.areas.length ? catalog.areas.map(a => <div className="admin-row" key={a.id}>
+        <span className="row-icon"><Layers3 size={18}/></span>
+        <div className="flex-1 min-w-0">
+          <p className="font-medium text-white truncate">{a.name}</p>
+          <p className="text-xs text-neutral-300 mt-0.5">
+            {catalog.stores.find(s => s.id === a.storeId)?.name || ''} ・
+            {' '}{catalog.machines.filter(m => m.areaId === a.id).length} 台
+          </p>
+        </div>
+        <SmallActions onEdit={() => {
+          setEditing(a.id); setName(a.name); setStoreId(a.storeId);
+        }} onDelete={() => remove(a)}/>
+      </div>) : <Empty title="エリアはまだありません"
+        description="店舗を登録した後、エリアを追加してください。"/>}
+    </div>
+  </div>;
 }
 const initialFields = { overview: '', adjustment: '', instructions: '', tips: '', safety: '' };
 
@@ -885,7 +986,7 @@ function MachinesAdmin({ catalog, refresh, notify, tidy }) {
     try { await api(`/api/admin/machines/${m.id}`, { method: 'DELETE' }); if (selectedId === m.id) setSelectedId(undefined); await refresh(); await tidy(); notify('マシンを削除しました。'); } catch (e) { notify(e.message, true); }
   }
   if (editing) return <div className="space-y-4"><button className="back-btn" onClick={() => setSelectedId(undefined)}><ArrowLeft size={18}/>マシン一覧</button><MachineEditor key={selectedId || 'new'} machine={selectedMachine} catalog={catalog} initialAreaId={selectedArea?.id} refresh={refresh} onSaved={id => setSelectedId(id)} onCancel={() => setSelectedId(undefined)} notify={notify} tidy={tidy}/></div>;
-  return <div className="space-y-4"><div className="admin-card space-y-4"><div className="flex justify-between items-center"><h3 className="card-title !mb-0">マシン管理</h3><button className="btn btn-primary btn-sm" onClick={() => setSelectedId(null)} disabled={!catalog.areas.length}><Plus size={17}/>追加</button></div>
+  return <div className="space-y-4"><div className="admin-card space-y-4"><div className="flex justify-between items-center"><h3 className="card-title !mb-0">マシン管理</h3><button className="btn btn-primary btn-sm" onClick={() => setSelectedId(null)} disabled={!catalog.stores.length}><Plus size={17}/>追加</button></div>
     <Field title="店舗を選択"><select className={fieldInput} value={selectedStore?.id || ''} onChange={e => { setStoreFilter(e.target.value); setAreaFilter(''); }}>{catalog.stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
     <Field title="エリアを選択"><select className={fieldInput} value={selectedArea?.id || ''} onChange={e => setAreaFilter(e.target.value)}>{areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field></div>
     <div className="admin-card"><div className="flex justify-between items-center mb-4"><h3 className="card-title !mb-0">表示順 <span className="count">{machines.length}</span></h3><span className="text-xs text-neutral-300">↑ ↓ で並び替え</span></div>
