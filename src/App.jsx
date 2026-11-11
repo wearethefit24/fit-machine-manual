@@ -559,7 +559,7 @@ function VisibilityToggle({isPublic,onChange,label}) {
   </button>;
 }
 
-function QRPanel({ machine }) {
+function QRPanel({ machine, isPublic = true }) {
   const [qr, setQr] = useState('');
   const [message, setMessage] = useState('');
   const url = `${window.location.origin}/machine/${machine.id}`;
@@ -570,7 +570,11 @@ function QRPanel({ machine }) {
       else { await navigator.clipboard.writeText(url); setMessage('URLをコピーしました。'); }
     } catch (e) { if (e.name !== 'AbortError') setMessage('共有できませんでした。'); }
   }
-  return <div className="panel mt-5"><div className="flex items-center gap-2 text-white font-semibold"><QrCode size={20} className="text-white"/> 専用QRコード</div><p className="text-neutral-200 text-sm mt-1">印刷してマシンに貼り付けられます。</p><div className="qr-frame">{qr ? <img src={qr} alt={`${machine.name}のQRコード`} className="w-54 h-54"/> : <LoaderCircle className="animate-spin"/>}</div><p className="url-text">{url}</p><div className="grid grid-cols-2 gap-2 mt-4"><a className="btn btn-secondary text-sm" href={qr || '#'} download={`QR_${machine.name}.png`} onClick={e => !qr && e.preventDefault()}><Download size={17}/> 画像保存</a><button className="btn btn-secondary text-sm" onClick={share}><Share2 size={17}/> 共有する</button></div>{message && <p className="text-white text-xs mt-3">{message}</p>}<a href={`/machine/${machine.id}`} target="_blank" rel="noopener noreferrer" className="text-sm text-white flex gap-2 items-center mt-4 justify-center">視聴画面で開く <ExternalLink size={14}/></a></div>;
+  return <div className="panel mt-5"><div className="flex items-center gap-2 text-white font-semibold"><QrCode size={20} className="text-white"/> 専用QRコード</div>
+    {!isPublic && <p className="text-sm text-red-300 mt-2" role="status">
+      現在、このQRコードは一般公開されていません。マシン・配置エリア・店舗の公開設定をご確認ください。
+    </p>}
+    <p className="text-neutral-200 text-sm mt-1">印刷してマシンに貼り付けられます。</p><div className="qr-frame">{qr ? <img src={qr} alt={`${machine.name}のQRコード`} className="w-54 h-54"/> : <LoaderCircle className="animate-spin"/>}</div><p className="url-text">{url}</p><div className="grid grid-cols-2 gap-2 mt-4"><a className="btn btn-secondary text-sm" href={qr || '#'} download={`QR_${machine.name}.png`} onClick={e => !qr && e.preventDefault()}><Download size={17}/> 画像保存</a><button className="btn btn-secondary text-sm" onClick={share}><Share2 size={17}/> 共有する</button></div>{message && <p className="text-white text-xs mt-3">{message}</p>}<a href={`/machine/${machine.id}`} target="_blank" rel="noopener noreferrer" className="text-sm text-white flex gap-2 items-center mt-4 justify-center">視聴画面で開く <ExternalLink size={14}/></a></div>;
 }
 function StoresAdmin({ catalog, refresh, notify, tidy }) {
   const [editing, setEditing] = useState(null); const [name, setName] = useState(''); const [pending, setPending] = useState(false);
@@ -1226,7 +1230,10 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
               }}>画像を削除</button>}
         </div>
       </div>
-    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'すべての店舗に変更を保存' : destinationSelections.length > 1 ? destinationSelections.length + '店舗に共通マシンを登録' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}/>}
+    </div><div className="mt-5 space-y-2">{progress && <div className="text-white text-sm flex gap-2 items-center"><LoaderCircle size={16} className="animate-spin"/>{progress}</div>}<Action pending={pending} className="w-full" onClick={save}>{machine ? 'すべての店舗に変更を保存' : destinationSelections.length > 1 ? destinationSelections.length + '店舗に共通マシンを登録' : 'マシンを登録'}</Action></div></div>{machine && <QRPanel machine={machine}
+      isPublic={machine.isPublic!==false && catalog.areas.some(area=>
+        area.id===machine.areaId && area.isPublic!==false &&
+        catalog.stores.some(store=>store.id===area.storeId && store.isPublic!==false))}/>}
     {cropRequest && <ManualImageCropper file={cropRequest.file} onApply={acceptCrop}
       square={cropRequest.kind === 'thumbnail'}
       onCancel={() => setCropRequest(null)}/>}
