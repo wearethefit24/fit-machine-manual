@@ -132,15 +132,45 @@ function QrScanner({ cameraRequest, onClose, onFound, onRetry }) {
   onFoundRef.current = onFound;
   const [message, setMessage] = useState('カメラを起動しています…');
   const [retryable, setRetryable] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
 
   useEffect(() => {
     let disposed = false;
     let stream = null;
+    let pendingVideoFrame = null;
+    let readyFallback = null;
+    const video = videoRef.current;
+    const revealWhenReady = () => {
+      if (disposed || !video || video.readyState < 2) return;
+      if (pendingVideoFrame !== null || readyFallback !== null) return;
+      // Show the picture only once live frames have begun, not while Safari
+      // is still establishing the camera stream and video dimensions.
+      if (typeof video.requestVideoFrameCallback === 'function') {
+        let frameCount = 0;
+        const waitForFrame = () => {
+          pendingVideoFrame = video.requestVideoFrameCallback(() => {
+            pendingVideoFrame = null;
+            if (disposed) return;
+            if (++frameCount >= 3) setVideoReady(true);
+            else waitForFrame();
+          });
+        };
+        waitForFrame();
+      } else {
+        readyFallback = window.setTimeout(() => {
+          readyFallback = null;
+          if (!disposed && video.readyState >= 2 && !video.paused) setVideoReady(true);
+        }, 180);
+      }
+    };
+    video?.addEventListener('playing', revealWhenReady);
+    video?.addEventListener('loadeddata', revealWhenReady);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     finishedRef.current = false;
     setMessage('カメラを起動しています…');
     setRetryable(false);
+    setVideoReady(false);
     const stopTracks = source => source?.getTracks().forEach(track => track.stop());
     (async () => {
       try {
@@ -168,6 +198,7 @@ function QrScanner({ cameraRequest, onClose, onFound, onRetry }) {
         if (disposed || finishedRef.current) controls.stop();
         else {
           scannerRef.current = controls;
+          revealWhenReady();
           setMessage('');
         }
       } catch (error) {
@@ -190,6 +221,10 @@ function QrScanner({ cameraRequest, onClose, onFound, onRetry }) {
     })();
     return () => {
       disposed = true;
+      video?.removeEventListener('playing', revealWhenReady);
+      video?.removeEventListener('loadeddata', revealWhenReady);
+      if (pendingVideoFrame !== null) video?.cancelVideoFrameCallback?.(pendingVideoFrame);
+      if (readyFallback !== null) window.clearTimeout(readyFallback);
       try { scannerRef.current?.stop(); } catch { /* Already stopped. */ }
       scannerRef.current = null;
       stopTracks(stream);
@@ -203,7 +238,7 @@ function QrScanner({ cameraRequest, onClose, onFound, onRetry }) {
       <button type="button" className="qr-scanner-close" onClick={onClose} aria-label="カメラを閉じる"><X size={24}/></button>
     </div>
     <div className="qr-scanner-viewfinder">
-      <video ref={videoRef} autoPlay playsInline muted className="qr-scanner-video"/>
+      <video ref={videoRef} autoPlay playsInline muted className={`qr-scanner-video${videoReady ? ' is-ready' : ''}`}/>
       <div className="qr-scanner-corners" aria-hidden="true"><ScanQrCode size={400} strokeWidth={0.5}/></div>
     </div>
     <p className="qr-scanner-help" role="status">{message || 'マシンに貼られたQRコードをカメラの中央に合わせてください。'}</p>
