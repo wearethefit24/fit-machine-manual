@@ -9,6 +9,7 @@ import {
 import QRCode from 'qrcode';
 import {getViewerParentRoute,shouldCompleteSwipe} from './swipeNavigation.js';
 import {resetPageScroll} from './scrollNavigation.js';
+import {loadThumbnail,peekThumbnail,warmThumbnails} from './thumbnailCache.js';
 
 const EMPTY = { stores: [], areas: [], machines: [] };
 const CONTENT_FIELDS = [
@@ -340,11 +341,19 @@ function ManualGuideSection({ field, title, kind, Icon, value, joined = false, m
   </>;
 }
 function MachineChoiceImage({ machineId }) {
-  const [loaded, setLoaded] = useState(false);
+  // A preloaded blob is displayed immediately, without a second HTTP call.
+  const [source,setSource]=useState(()=>peekThumbnail(machineId));
+  useEffect(()=>{
+    let active=true;
+    const ready=peekThumbnail(machineId);
+    if(ready)setSource(ready);
+    else setSource(null);
+    loadThumbnail(machineId).then(url=>{if(active)setSource(url);});
+    return ()=>{active=false;};
+  },[machineId]);
   return <span className="viewer-machine-placeholder" aria-hidden="true">
-    <img className={'viewer-machine-thumbnail' + (loaded ? ' is-ready' : '')}
-      src={'/api/machine-thumbnail/' + machineId} alt="" loading="lazy"
-      onLoad={() => setLoaded(true)} onError={() => setLoaded(false)}/>
+    {source && <img className="viewer-machine-thumbnail is-ready" src={source}
+      alt="" loading="eager" decoding="async" fetchPriority="high"/>}
   </span>;
 }
 function Viewer({ catalog, loading, error, route, navigate, refresh }) {
@@ -383,6 +392,13 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   const currentArea = area || (machine ? catalog.areas.find(a => a.id === machine.areaId) : null);
   const isAreaPage = ids[0] === 'area';
   const isStorePage = ids[0] === 'store';
+  useEffect(()=>{
+    if(!isStorePage || !store || loading || error)return;
+    const areaIds=new Set(catalog.areas.filter(area=>area.storeId===store.id)
+      .map(area=>area.id));
+    warmThumbnails(catalog.machines.filter(machine=>areaIds.has(machine.areaId))
+      .map(machine=>machine.id));
+  },[isStorePage,store?.id,loading,error,catalog.areas,catalog.machines]);
   const title = isMachinePage ? 'マシン取扱説明書' : isAreaPage ? 'マシン選択' : isStorePage ? 'エリア選択' : '店舗選択';
   const label = isMachinePage ? 'EXERCISE GUIDE' : isAreaPage ? 'SELECT MACHINE' : isStorePage ? 'SELECT AREA' : 'SELECT LOCATION';
   const list = isStorePage ? catalog.areas.filter(a => a.storeId === store?.id) : isAreaPage ? catalog.machines.filter(m => m.areaId === area?.id) : catalog.stores;
