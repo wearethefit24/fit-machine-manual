@@ -309,14 +309,17 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
       // A store without an area gets a standard "マシン" area within the same D1 transaction.
       let areaIds, newAreas = [];
       if (d.storeSelections !== undefined) {
-        // One manual is registered per (store, area) destination. A store may
-        // therefore appear more than once, provided its area is different.
+        // Exactly one area category can be registered per machine across stores.
+        // Older clients without areaName retain the previous "マシン" fallback.
         const selections = d.storeSelections;
+        const hasAreaName = d.areaName !== undefined;
+        if (hasAreaName && !validName(d.areaName)) return fail('エリアを選択してください。');
+        const selectedAreaName = hasAreaName ? d.areaName.trim() : 'マシン';
         if (!Array.isArray(selections) || selections.length < 1 || selections.length > 20 ||
           selections.some(s => !s || !validId(s.storeId) ||
             (s.areaId != null && !validId(s.areaId))) ||
-          new Set(selections.map(s => s.storeId + ':' + (s.areaId ?? 'new'))).size !== selections.length) {
-          return fail('登録先の店舗・エリアを1～20件、重複せずに選択してください。');
+          new Set(selections.map(s => s.storeId)).size !== selections.length) {
+          return fail('登録先の店舗を1～20件、重複せずに選択してください。');
         }
         const storeIds = [...new Set(selections.map(s => s.storeId))];
         const stores = (await db.prepare(`SELECT id FROM stores WHERE id IN (${storeIds.map(() => '?').join(',')})`)
@@ -325,25 +328,28 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
         const provided = selections.filter(s => s.areaId != null);
         let existing = [];
         if (provided.length) {
-          existing = (await db.prepare(`SELECT id,store_id AS storeId FROM areas WHERE id IN (${provided.map(() => '?').join(',')})`)
+          existing = (await db.prepare(`SELECT id,store_id AS storeId,name FROM areas WHERE id IN (${provided.map(() => '?').join(',')})`)
             .bind(...provided.map(s => s.areaId)).all()).results;
         }
         if (existing.length !== provided.length ||
-          provided.some(s => !existing.some(a => a.id === s.areaId && a.storeId === s.storeId))) {
-          return fail('店舗と配置エリアの組み合わせが正しくありません。');
+          provided.some(s => !existing.some(a => a.id === s.areaId && a.storeId === s.storeId &&
+            (!hasAreaName || a.name.trim() === selectedAreaName)))) {
+          return fail('選択したエリアが店舗と一致しません。画面を再読み込みしてください。');
         }
         const missingArea = selections.filter(s => s.areaId == null);
         if (missingArea.length) {
           const missingStoreIds = missingArea.map(s => s.storeId);
-          const present = (await db.prepare(`SELECT store_id AS storeId FROM areas WHERE store_id IN (${missingStoreIds.map(() => '?').join(',')})`)
-            .bind(...missingStoreIds).all()).results;
+          const existingSql = `SELECT store_id AS storeId FROM areas WHERE store_id IN (${missingStoreIds.map(() => '?').join(',')})` +
+            (hasAreaName ? ' AND name=?' : '');
+          const present = (await db.prepare(existingSql)
+            .bind(...missingStoreIds, ...(hasAreaName ? [selectedAreaName] : [])).all()).results;
           if (present.length) return fail('エリア情報が更新されています。画面を再読み込みしてください。', 409);
         }
         const generated = new Map(missingArea.map(s => [s.storeId, crypto.randomUUID()]));
         areaIds = selections.map(s => s.areaId ?? generated.get(s.storeId));
         newAreas = missingArea.map(s => db.prepare(`INSERT INTO areas(id,store_id,name,position)
-          VALUES(?,?,'マシン',(SELECT COALESCE(MAX(position),0)+1 FROM areas WHERE store_id=?))`)
-          .bind(generated.get(s.storeId), s.storeId, s.storeId));
+          VALUES(?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM areas WHERE store_id=?))`)
+          .bind(generated.get(s.storeId), s.storeId, selectedAreaName, s.storeId));
       } else {
         // Older clients can continue registering an areaId or areaIds list.
         areaIds = d.areaIds === undefined ? [d.areaId] : d.areaIds;
