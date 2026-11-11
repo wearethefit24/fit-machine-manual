@@ -1,6 +1,5 @@
-// Cloudflare Pages Functions: D1 stores strongly-consistent metadata; Workers KV stores video chunks.
-const CHUNK_SIZE = 8 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 80 * 1024 * 1024;
+// Cloudflare Pages Functions: D1 stores metadata; Workers KV stores instruction images and the site logo.
+// Existing video records are retained only for cleanup when parent records are deleted.
 const SESSION_SECONDS = 12 * 60 * 60;
 const LOGO_KEY = 'site:logo';
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
@@ -121,10 +120,8 @@ async function catalog(db) {
   const [storeRows, areaRows, machineRows] = await Promise.all([
     db.prepare('SELECT id,name,position FROM stores ORDER BY position,name').all(),
     db.prepare('SELECT id,store_id AS storeId,name,position FROM areas ORDER BY position,name').all(),
-    db.prepare(`SELECT m.id,m.area_id AS areaId,m.name,m.position,m.overview,m.adjustment,m.instructions,m.tips,m.safety,
-      CASE WHEN v.status='ready' THEN v.id ELSE NULL END AS videoId,
-      CASE WHEN v.status='ready' THEN v.filename ELSE NULL END AS videoFilename
-      FROM machines m LEFT JOIN videos v ON m.video_id=v.id ORDER BY m.position,m.name`).all(),
+    db.prepare(`SELECT m.id,m.area_id AS areaId,m.name,m.position,m.overview,m.adjustment,m.instructions,m.tips,m.safety
+      FROM machines m ORDER BY m.position,m.name`).all(),
   ]);
   return { stores: storeRows.results, areas: areaRows.results, machines: machineRows.results };
 }
@@ -290,15 +287,6 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
       await env.VIDEO_KV.put(`manual:${id}:${index}`, data);
       return json({ ok: true, imageId: index });
     }
-    if (action === 'video' && index === 'init' && method === 'POST') {
-      const d = await body(req);
-      if (typeof d.filename !== 'string' || !d.filename.trim() || d.filename.length > 180 || !['video/mp4', 'video/webm', 'video/quicktime'].includes(d.mimeType) || !Number.isInteger(d.size) || d.size <= 0 || d.size > MAX_VIDEO_BYTES) return fail('MP4・WebM・MOVの動画（80MiB以内）を選択してください。');
-      const machine = await db.prepare('SELECT id FROM machines WHERE id=?').bind(id).first(); if (!machine) return fail('マシンがありません。', 404);
-      const videoId = crypto.randomUUID(); const count = Math.ceil(d.size / CHUNK_SIZE);
-      await db.prepare('INSERT INTO videos(id,machine_id,filename,mime_type,byte_size,chunk_size,chunk_count,status) VALUES(?,?,?,?,?,?,?,\'uploading\')')
-        .bind(videoId, id, d.filename, d.mimeType, d.size, CHUNK_SIZE, count).run();
-      return json({ ok: true, videoId, chunkSize: CHUNK_SIZE, chunkCount: count }, 201);
-    }
     if (method === 'PATCH') {
       const d = await body(req); if (!validName(d.name) || !validId(d.areaId)) return fail('エリアとマシン名を指定してください。');
       const area = await db.prepare('SELECT id FROM areas WHERE id=?').bind(d.areaId).first(); if (!area) return fail('エリアがありません。', 404);
@@ -320,96 +308,7 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
       return r.meta.changes ? json({ ok: true }) : fail('マシンがありません。', 404);
     }
   }
-  if (type === 'videos' && validId(id)) {
-    const v = await db.prepare('SELECT * FROM videos WHERE id=?').bind(id).first();
-    if (!v) return fail('動画が見つかりません。', 404);
-    if (action === 'chunks' && method === 'PUT') {
-      const i = Number(index);
-      if (v.status !== 'uploading' || !/^\d+$/.test(index || '') || i >= v.chunk_count) return fail('アップロード先が無効です。');
-      const arr = await req.arrayBuffer();
-      const expected = i < v.chunk_count - 1 ? v.chunk_size : v.byte_size - i * v.chunk_size;
-      if (arr.byteLength !== expected) return fail('動画のチャンク容量が一致しません。');
-      await env.VIDEO_KV.put(`video:${id}:${i}`, arr);
-      await db.prepare('INSERT INTO video_chunks(video_id,chunk_index,byte_size) VALUES(?,?,?) ON CONFLICT(video_id,chunk_index) DO UPDATE SET byte_size=excluded.byte_size')
-        .bind(id, i, arr.byteLength).run();
-      return json({ ok: true });
-    }
-    if (action === 'finish' && method === 'POST') {
-      if (v.status !== 'uploading') return fail('アップロードは完了済みです。');
-      const counts = await db.prepare('SELECT COUNT(*) AS pieces,COALESCE(SUM(byte_size),0) AS bytes FROM video_chunks WHERE video_id=?').bind(id).first();
-      if (counts.pieces !== v.chunk_count || counts.bytes !== v.byte_size) return fail('アップロードが完了していません。', 409);
-      const machine = await db.prepare('SELECT video_id FROM machines WHERE id=?').bind(v.machine_id).first();
-      if (!machine) return fail('マシンがありません。', 404);
-      await db.batch([
-        db.prepare("UPDATE videos SET status='ready' WHERE id=?").bind(id),
-        db.prepare("UPDATE machines SET video_id=?,updated_at=datetime('now') WHERE id=?").bind(id, v.machine_id),
-      ]);
-      if (machine.video_id && machine.video_id !== id) {
-        const old = await db.prepare('SELECT id,chunk_count FROM videos WHERE id=?').bind(machine.video_id).first();
-        await db.prepare('DELETE FROM videos WHERE id=?').bind(machine.video_id).run();
-        if (old) { await enqueueCleanup(db, [old]); waitUntil(drainCleanup(env)); }
-      }
-      return json({ ok: true });
-    }
-    if (method === 'DELETE' && !action) {
-      const machine = await db.prepare('SELECT video_id FROM machines WHERE id=?').bind(v.machine_id).first();
-      await db.batch([
-        db.prepare('UPDATE machines SET video_id=NULL WHERE video_id=?').bind(id),
-        db.prepare('DELETE FROM videos WHERE id=?').bind(id),
-      ]);
-      await enqueueCleanup(db, [v]); waitUntil(drainCleanup(env));
-      return json({ ok: true });
-    }
-  }
   return fail('操作が見つかりません。', 404);
-}
-
-export function byteRange(range, total) {
-  if (!range) return { start: 0, end: total - 1, partial: false };
-  const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
-  if (!match || (!match[1] && !match[2])) return null;
-  let start, end;
-  if (match[1] === '') {
-    const length = Number(match[2]);
-    if (!Number.isSafeInteger(length) || length <= 0) return null;
-    start = Math.max(0, total - length); end = total - 1;
-  } else {
-    start = Number(match[1]); end = match[2] ? Number(match[2]) : total - 1;
-  }
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= total || end < start) return null;
-  return { start, end: Math.min(end, total - 1), partial: true };
-}
-async function serveVideo(req, env, id) {
-  if (!validId(id)) return fail('動画がありません。', 404);
-  const v = await env.DB.prepare(`SELECT v.* FROM videos v JOIN machines m ON m.video_id=v.id WHERE v.id=? AND v.status='ready'`).bind(id).first();
-  if (!v) return fail('動画がありません。', 404);
-  const range = byteRange(req.headers.get('range'), v.byte_size);
-  if (!range) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${v.byte_size}`, 'accept-ranges': 'bytes' } });
-  const { start, end, partial } = range;
-  const headers = {
-    'content-type': v.mime_type,
-    'content-length': String(end - start + 1),
-    'accept-ranges': 'bytes',
-    'cache-control': 'public, max-age=60',
-    'x-content-type-options': 'nosniff',
-    ...(partial ? { 'content-range': `bytes ${start}-${end}/${v.byte_size}` } : {}),
-  };
-  if (req.method === 'HEAD') return new Response(null, { status: partial ? 206 : 200, headers });
-  const firstChunk = Math.floor(start / v.chunk_size), finalChunk = Math.floor(end / v.chunk_size);
-  let current = firstChunk;
-  const stream = new ReadableStream({
-    async pull(controller) {
-      if (current > finalChunk) { controller.close(); return; }
-      const part = await env.VIDEO_KV.get(`video:${id}:${current}`, 'arrayBuffer');
-      if (!part) { controller.error(new Error('動画データの反映待ちです。再読み込みしてください。')); return; }
-      const chunkStart = current * v.chunk_size;
-      const from = Math.max(0, start - chunkStart);
-      const to = Math.min(part.byteLength, end - chunkStart + 1);
-      controller.enqueue(new Uint8Array(part).subarray(from, to));
-      current++;
-    }
-  });
-  return new Response(stream, { status: partial ? 206 : 200, headers });
 }
 
 export async function handleApi(context) {
@@ -421,7 +320,6 @@ export async function handleApi(context) {
   try {
     if (req.method === 'GET' && path.length === 2 && path[1] === 'catalog') return json(await catalog(env.DB));
     if ((req.method === 'GET' || req.method === 'HEAD') && path.length === 2 && path[1] === 'logo') return serveLogo(req, env);
-    if ((req.method === 'GET' || req.method === 'HEAD') && path[1] === 'video' && path.length === 3) return serveVideo(req, env, path[2]);
     if ((req.method === 'GET' || req.method === 'HEAD') && path[1] === 'manual-image' && path.length === 4)
       return serveManualImage(req, env, path[2], path[3]);
     if (path[1] === 'admin') {
