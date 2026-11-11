@@ -626,3 +626,104 @@ test('editing a shared manual can link another existing store copy without repla
   assert.equal(one.instructions,'全店舗共通の説明');
   assert.equal(two.instructions,'全店舗共通の説明');
 });
+
+test('a shared manual can assign different area names to each store without duplicating manuals',async()=>{
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const stores=[];
+  for(const name of ['江古田店','大宮店','池袋店'])
+    stores.push((await (await fetchApi('/api/admin/stores','POST',{name})).json()).id);
+  const area=async(storeId,name)=>(await (await fetchApi('/api/admin/areas','POST',{
+    storeId,name
+  })).json()).id;
+  const first=await area(stores[0],'マシン');
+  const second=await area(stores[1],'フリーウェイト');
+  const alternate=await area(stores[1],'マシン');
+  await area(stores[2],'有酸素');
+  const payload={name:'チェストプレス',areaName:'マシン',
+    overview:'胸の運動',adjustment:'座面調整',instructions:'ゆっくり押す',
+    tips:'呼吸',safety:'無理しない',
+    storeSelections:[
+      {storeId:stores[0],areaId:first},
+      {storeId:stores[1],areaId:second},
+      {storeId:stores[2],areaId:null,areaName:'フリーウェイト'}
+    ]
+  };
+  let response=await fetchApi('/api/admin/manual-groups','POST',payload);
+  assert.equal(response.status,201);
+  const created=await response.json();
+  assert.equal(created.ids.length,3);
+  assert.deepEqual(created.areaIds.slice(0,2),[first,second]);
+  let catalog=await (await fetchApi('/api/catalog')).json();
+  assert.equal(catalog.areas.find(a=>a.id===created.areaIds[2]).name,'フリーウェイト');
+  for(const mid of created.ids)
+    assert.equal(catalog.machines.find(m=>m.id===mid).groupId,created.groupId);
+  const invalid=await fetchApi('/api/admin/manual-groups','POST',{
+    ...payload,groupId:created.groupId,
+    storeSelections:[{storeId:stores[0],areaId:second}]
+  });
+  assert.equal(invalid.status,409);
+  const duplicate=await fetchApi('/api/admin/manual-groups','POST',{
+    ...payload,groupId:created.groupId,
+    storeSelections:[
+      {storeId:stores[0],areaId:first},
+      {storeId:stores[0],areaId:first}
+    ]
+  });
+  assert.equal(duplicate.status,400);
+  response=await fetchApi('/api/admin/manual-groups','POST',{
+    ...payload,groupId:created.groupId,
+    overview:'全店舗で共有する最新説明',
+    storeSelections:[
+      {storeId:stores[0],areaId:first},
+      {storeId:stores[1],areaId:alternate},
+      {storeId:stores[2],areaId:created.areaIds[2]}
+    ]
+  });
+  assert.equal(response.status,200);
+  const changed=await response.json();
+  assert.deepEqual(changed.ids,created.ids);
+  assert.equal(changed.areaIds[1],alternate);
+  catalog=await (await fetchApi('/api/catalog')).json();
+  for(const mid of created.ids)
+    assert.equal(catalog.machines.find(m=>m.id===mid).overview,'全店舗で共有する最新説明');
+  assert.equal((await env.DB.prepare('SELECT count(*) AS count FROM machine_manual_groups').first()).count,1);
+  const deleted=await fetchApi('/api/admin/manual-groups/'+created.groupId,'DELETE');
+  assert.equal(deleted.status,200);
+  assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,0);
+});
+
+test('legacy identical manuals link across different areas when edited together',async()=>{
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const storeIds=[];
+  for(const name of ['A店','B店'])
+    storeIds.push((await (await fetchApi('/api/admin/stores','POST',{name})).json()).id);
+  const area1=(await (await fetchApi('/api/admin/areas','POST',{
+    storeId:storeIds[0],name:'マシン'
+  })).json()).id;
+  const area2=(await (await fetchApi('/api/admin/areas','POST',{
+    storeId:storeIds[1],name:'フリーウェイト'
+  })).json()).id;
+  const item={name:'チェストプレス',overview:'胸',adjustment:'位置調整',
+    instructions:'押す',tips:'姿勢',safety:'安全'};
+  const mids=[];
+  for(const areaId of [area1,area2])
+    mids.push((await (await fetchApi('/api/admin/machines','POST',{
+      ...item,areaId
+    })).json()).id);
+  const updated=await fetchApi('/api/admin/manual-groups','POST',{
+    ...item,seedMachineId:mids[0],areaName:'マシン',overview:'共通化',
+    storeSelections:[
+      {storeId:storeIds[0],areaId:area1},
+      {storeId:storeIds[1],areaId:area2}
+    ]
+  });
+  assert.equal(updated.status,200);
+  const group=await updated.json();
+  assert.deepEqual(group.ids,mids);
+  const machines=(await (await fetchApi('/api/catalog')).json()).machines;
+  assert.equal(machines.length,2);
+  assert.equal(machines[0].groupId,machines[1].groupId);
+  assert.ok(machines.every(m=>m.overview==='共通化'));
+});
