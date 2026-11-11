@@ -161,6 +161,29 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   white-space: nowrap;
   max-width: calc(50% - 83px);
 }
+.site-header-public-link {
+  position: absolute;
+  right: max(12px, env(safe-area-inset-right, 0px));
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  bottom: 6px;
+  width: 44px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2;
+  border-radius: 8px;
+  -webkit-tap-highlight-color: transparent;
+}
+.site-header-public-link svg {
+  display: block;
+  width: 24px;
+  height: 40px;
+}
+.site-header-public-link:focus-visible {
+  outline: 2px solid #22c55e;
+  outline-offset: -2px;
+}
+.site-header-public-link:active { opacity: .7; }
 .site-logo-box {
   /* Keep the original 150×48 logo perfectly centered in the viewport,
      independent of the admin label placed on the left. The vertical center
