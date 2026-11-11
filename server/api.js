@@ -892,6 +892,15 @@ export async function handleApi(context) {
   if (path[0] !== 'api') return fail('APIがありません。', 404);
   try {
     if (req.method === 'GET' && path.length === 2 && path[1] === 'catalog') return json(await catalog(env.DB));
+    // Resolve newly registered QR links against fresh D1 data, independently
+    // of an already-open visitor page's cached /api/catalog response. The
+    // public catalog applies store, area, and machine visibility restrictions.
+    if (req.method === 'GET' && path.length === 3 && path[1] === 'public-machine') {
+      if (!validId(path[2])) return fail('マシンが見つかりません。',404);
+      const publicData=await catalog(env.DB);
+      const machine=publicData.machines.find(item=>item.id.toLowerCase()===path[2].toLowerCase());
+      return machine ? json(machine) : fail('マシンが見つかりません。非公開設定または登録状態をご確認ください。',404);
+    }
     if ((req.method === 'GET' || req.method === 'HEAD') && path.length === 2 && path[1] === 'logo') return serveLogo(req, env);
     if ((req.method === 'GET' || req.method === 'HEAD') && path[1] === 'manual-image' && path.length === 4)
       return serveManualImage(req, env, path[2], path[3]);
