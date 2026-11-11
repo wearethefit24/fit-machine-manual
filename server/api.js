@@ -234,8 +234,21 @@ async function deletingImages(db, scope, id) {
 async function serveManualImage(req, env, machineId, imageId) {
   if (!validId(machineId) || !validId(imageId)) return fail('画像がありません。', 404);
   const machine = await env.DB.prepare('SELECT adjustment,instructions FROM machines WHERE id=?').bind(machineId).first();
-  if (!machine || !imagesFromMachine(machine).includes(imageId)) return fail('画像がありません。', 404);
-  const data = await env.VIDEO_KV.get(`manual:${machineId}:${imageId}`, 'arrayBuffer');
+  if(!machine) return fail('画像がありません。',404);
+  const group = await groupForMachine(env.DB,machineId);
+  if(!imagesFromMachine(group || machine).includes(imageId)) return fail('画像がありません。',404);
+  let data = group
+    ? await env.VIDEO_KV.get(`manual:${group.id}:${imageId}`,'arrayBuffer')
+    : await env.VIDEO_KV.get(`manual:${machineId}:${imageId}`,'arrayBuffer');
+  // Previously uploaded photos remain visible when old per-store manuals are
+  // first linked into a shared group; no destructive KV migration is required.
+  if(!data && group) {
+    const members=await groupMachines(env.DB,group.id);
+    for(const member of [machineId,...members.map(m=>m.id).filter(id=>id!==machineId)]){
+      data=await env.VIDEO_KV.get(`manual:${member}:${imageId}`,'arrayBuffer');
+      if(data)break;
+    }
+  }
   if (!data) return fail('画像がありません。', 404);
   return new Response(req.method === 'HEAD' ? null : data, {
     status: 200, headers: {
@@ -250,8 +263,19 @@ async function serveMachineThumbnail(req, env, machineId) {
   const machine = await env.DB.prepare('SELECT id FROM machines WHERE id=?')
     .bind(machineId).first();
   if (!machine) return fail('画像がありません。', 404);
-  const data = await env.VIDEO_KV.get(THUMBNAIL_KEY(machineId), 'arrayBuffer');
-  if (!data) return fail('画像がありません。', 404);
+  const group = await groupForMachine(env.DB,machineId);
+  if(group?.thumbnail_state===-1) return fail('画像がありません。',404);
+  let data=group
+    ? await env.VIDEO_KV.get(THUMBNAIL_KEY(group.id),'arrayBuffer')
+    : await env.VIDEO_KV.get(THUMBNAIL_KEY(machineId),'arrayBuffer');
+  if(!data && group && group.thumbnail_state===0) {
+    const members=await groupMachines(env.DB,group.id);
+    for(const member of [machineId,...members.map(m=>m.id).filter(id=>id!==machineId)]){
+      data=await env.VIDEO_KV.get(THUMBNAIL_KEY(member),'arrayBuffer');
+      if(data)break;
+    }
+  }
+  if(!data) return fail('画像がありません。',404);
   return new Response(req.method === 'HEAD' ? null : data, {
     status: 200,
     headers: {
