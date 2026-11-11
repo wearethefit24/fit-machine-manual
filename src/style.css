@@ -982,7 +982,7 @@ button, a { touch-action: manipulation; }
   line-height: 1.35;
 }
 .manual-exercise-panel .manual-exercise-part-instructions .manual-guide-title {
-  color: #57c48a;
+  color: #55DC2B;
   font-size: clamp(21px,5.8vw,25px);
 }
 .manual-exercise-panel .manual-exercise-part-tips .manual-guide-title {
