@@ -374,69 +374,67 @@ test('machine registration selects stores without pre-existing areas',async()=>{
   assert.ok(existing);
 });
 
-test('one machine manual can target several areas within each selected store', async () => {
+test('machine registration applies one selected area across multiple stores', async () => {
   const { env, fetchApi } = fixture();
   await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
-
   const storeA = (await (await fetchApi('/api/admin/stores','POST',{name:'江古田店'})).json()).id;
   const storeB = (await (await fetchApi('/api/admin/stores','POST',{name:'大宮店'})).json()).id;
   const storeC = (await (await fetchApi('/api/admin/stores','POST',{name:'新店舗'})).json()).id;
-  const areaA1 = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeA,name:'1F'})).json()).id;
-  const areaA2 = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeA,name:'2F'})).json()).id;
-  const areaB1 = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeB,name:'ウェイト'})).json()).id;
-  const areaB2 = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeB,name:'有酸素'})).json()).id;
+  const areaA = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeA,name:'有酸素'})).json()).id;
+  const areaAOther = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeA,name:'マシン'})).json()).id;
+  const areaB = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeB,name:'有酸素'})).json()).id;
+  const areaBOther = (await (await fetchApi('/api/admin/areas','POST',{storeId:storeB,name:'マシン'})).json()).id;
+  // Store C has areas, but not the selected category. It should receive "有酸素".
+  await fetchApi('/api/admin/areas','POST',{storeId:storeC,name:'マシン'});
   const selected = [
-    {storeId:storeA,areaId:areaA1},
-    {storeId:storeA,areaId:areaA2},
-    {storeId:storeB,areaId:areaB1},
-    {storeId:storeB,areaId:areaB2},
+    {storeId:storeA,areaId:areaA},
+    {storeId:storeB,areaId:areaB},
     {storeId:storeC,areaId:null}
   ];
-  const values = {name:'ラットプルダウン',storeSelections:selected,
-    overview:'背中を鍛える',adjustment:'座面を調整',instructions:'握って引く',
-    tips:'肩をすくめない',safety:'無理な重量にしない'};
-  const response = await fetchApi('/api/admin/machines','POST',values);
-  assert.equal(response.status,201);
-  const result = await response.json();
-  assert.equal(result.ids.length,5);
-  assert.equal(result.areaIds.length,5);
-  assert.equal(new Set(result.ids).size,5);
-  assert.deepEqual(result.areaIds.slice(0,4),[areaA1,areaA2,areaB1,areaB2]);
+  const values={name:'ランニングマシン',areaName:'有酸素',storeSelections:selected,
+    overview:'有酸素運動',adjustment:'速度を設定',instructions:'歩き始める',
+    tips:'前を見る',safety:'急な速度変更を避ける'};
+  const createdResponse=await fetchApi('/api/admin/machines','POST',values);
+  assert.equal(createdResponse.status,201);
+  const created=await createdResponse.json();
+  assert.equal(created.ids.length,3);
+  assert.equal(new Set(created.ids).size,3);
+  assert.deepEqual(created.areaIds.slice(0,2),[areaA,areaB]);
   const catalog=await (await fetchApi('/api/catalog')).json();
-  for(let i=0;i<selected.length;i++){
-    const machine=catalog.machines.find(row=>row.id===result.ids[i]);
-    assert.ok(machine);
-    assert.equal(machine.areaId,result.areaIds[i]);
-    assert.equal(machine.overview,values.overview);
+  for(let i=0;i<3;i++){
+    const machine=catalog.machines.find(m=>m.id===created.ids[i]);
+    const area=catalog.areas.find(a=>a.id===machine.areaId);
+    assert.equal(machine.areaId,created.areaIds[i]);
+    assert.equal(area.name,'有酸素');
+    assert.equal(area.storeId,selected[i].storeId);
     assert.equal(machine.instructions,values.instructions);
   }
-  const generatedArea = catalog.areas.find(row=>row.id===result.areaIds[4]);
-  assert.equal(generatedArea.storeId,storeC);
-  assert.equal(generatedArea.name,'マシン');
+  // A different area in a store is never selected by accident.
+  assert.equal(catalog.machines.some(m=>m.areaId===areaAOther || m.areaId===areaBOther),false);
 
-  // Another area in the same store is an independent machine/QR destination.
-  assert.notEqual(result.ids[0],result.ids[1]);
-  const invalid = [
-    [{storeId:storeA,areaId:areaA1},{storeId:storeA,areaId:areaA1}],
-    [{storeId:storeA,areaId:areaB1}],
-    [{storeId:storeC,areaId:null},{storeId:storeC,areaId:null}],
-    [{storeId:storeA,areaId:null}],
-    [{storeId:storeA,areaId:areaA1},{storeId:storeB,areaId:'123e4567-e89b-42d3-a456-426614174099'}]
+  const count=catalog.machines.length;
+  const invalid=[
+    // Same store must not be registered twice, even into different areas.
+    [{storeId:storeA,areaId:areaA},{storeId:storeA,areaId:areaAOther}],
+    [{storeId:storeA,areaId:areaA},{storeId:storeA,areaId:areaA}],
+    // The selected area must match every provided destination area.
+    [{storeId:storeA,areaId:areaAOther}],
+    [{storeId:storeA,areaId:areaA},{storeId:storeB,areaId:areaBOther}],
+    [{storeId:storeA,areaId:areaB}],
+    [{storeId:storeC,areaId:null}]
   ];
   for(const storeSelections of invalid){
-    const failed=await fetchApi('/api/admin/machines','POST',{...values,storeSelections});
-    assert.ok([400,404,409].includes(failed.status));
+    const response=await fetchApi('/api/admin/machines','POST',{...values,storeSelections});
+    assert.ok([400,404,409].includes(response.status));
   }
-  assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,5);
-
-  // Older areaIds clients may now target multiple areas in the same store too.
+  assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,count);
+  // Older clients without a category name can still register their own existing area.
   const legacy=await fetchApi('/api/admin/machines','POST',{
-    ...values,storeSelections:undefined,areaIds:[areaA1,areaA2],name:'チェストプレス'
+    ...values,areaName:undefined,storeSelections:undefined,
+    areaIds:[areaA],name:'バイク'
   });
   assert.equal(legacy.status,201);
-  const oldResult=await legacy.json();
-  assert.deepEqual(oldResult.areaIds,[areaA1,areaA2]);
-  assert.equal(oldResult.ids.length,2);
+  assert.equal((await legacy.json()).ids.length,1);
 });
 
 test('machine picker thumbnails require admin uploads and display publicly', async () => {
