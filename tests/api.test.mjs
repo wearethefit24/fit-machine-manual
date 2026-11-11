@@ -490,3 +490,106 @@ test('machine picker thumbnail copies stay independent and parent deletion clean
   assert.equal((await fetchApi('/api/admin/stores/'+storeIds[1],'DELETE')).status,200);
   assert.equal(env.VIDEO_KV.values.has('machine-thumb:'+created.ids[1]),false);
 });
+
+test('a shared manual updates all selected stores with one canonical content record', async () => {
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const ids=[];
+  for(const name of ['A店','B店','C店'])
+    ids.push((await (await fetchApi('/api/admin/stores','POST',{name})).json()).id);
+  const a1=(await (await fetchApi('/api/admin/areas','POST',{storeId:ids[0],name:'有酸素'})).json()).id;
+  const a2=(await (await fetchApi('/api/admin/areas','POST',{storeId:ids[1],name:'有酸素'})).json()).id;
+  const values={name:'ランニングマシン',areaName:'有酸素',storeIds:[ids[0],ids[1]],
+    overview:'初期説明',adjustment:'調整1',instructions:'走り始める',tips:'姿勢',safety:'安全'};
+  let res=await fetchApi('/api/admin/manual-groups','POST',values);
+  assert.equal(res.status,201);
+  let shared=await res.json();
+  assert.equal(shared.ids.length,2);
+  assert.deepEqual(shared.areaIds,[a1,a2]);
+  assert.ok(shared.groupId);
+  let catalog=await (await fetchApi('/api/catalog')).json();
+  for(const mid of shared.ids){
+    const machine=catalog.machines.find(m=>m.id===mid);
+    assert.equal(machine.groupId,shared.groupId);
+    assert.equal(machine.overview,'初期説明');
+  }
+  const groupRow=await env.DB.prepare('SELECT * FROM machine_manual_groups WHERE id=?')
+    .bind(shared.groupId).first();
+  assert.equal(groupRow.name,values.name);
+  const groupCount=await env.DB.prepare('SELECT count(*) AS count FROM machine_manual_groups').first();
+  assert.equal(groupCount.count,1);
+
+  const imageId='123e4567-e89b-42d3-a456-426614174077';
+  const photo=Uint8Array.from([255,216,255,224,0,16,74,70,73,70,0,1]).buffer;
+  assert.equal((await fetchApi('/api/admin/manual-groups/'+shared.groupId+'/images/'+imageId,'PUT',photo)).status,200);
+  const adjustment='@FIT_IMG_V1:'+JSON.stringify([{text:'調整2',imageId}]);
+  res=await fetchApi('/api/admin/manual-groups','POST',{
+    ...values,groupId:shared.groupId,name:'ランニングマシン新型',
+    overview:'共通更新',adjustment,storeIds:ids
+  });
+  assert.equal(res.status,200);
+  const updated=await res.json();
+  assert.deepEqual(updated.ids.slice(0,2),shared.ids);
+  assert.equal(updated.ids.length,3);
+  catalog=await (await fetchApi('/api/catalog')).json();
+  for(const mid of updated.ids){
+    const machine=catalog.machines.find(m=>m.id===mid);
+    assert.equal(machine.name,'ランニングマシン新型');
+    assert.equal(machine.overview,'共通更新');
+    assert.equal(machine.adjustment,adjustment);
+    const image=await fetchApi('/api/manual-image/'+mid+'/'+imageId);
+    assert.equal(image.status,200);
+    assert.deepEqual(new Uint8Array(await image.arrayBuffer()),new Uint8Array(photo));
+  }
+  assert.equal(catalog.areas.find(a=>a.id===updated.areaIds[2]).name,'有酸素');
+  assert.equal(catalog.areas.find(a=>a.id===updated.areaIds[2]).storeId,ids[2]);
+
+  assert.equal((await fetchApi('/api/admin/manual-groups/'+shared.groupId+'/thumbnail','PUT',photo)).status,200);
+  for(const mid of updated.ids)
+    assert.equal((await fetchApi('/api/machine-thumbnail/'+mid)).status,200);
+  // Removing an assignment keeps the master and other QR links intact.
+  res=await fetchApi('/api/admin/manual-groups','POST',{
+    ...values,groupId:shared.groupId,adjustment,storeIds:[ids[1],ids[2]]
+  });
+  assert.equal(res.status,200);
+  assert.equal((await fetchApi('/api/machine-thumbnail/'+updated.ids[0])).status,404);
+  assert.equal((await fetchApi('/api/manual-image/'+updated.ids[1]+'/'+imageId)).status,200);
+  assert.equal((await fetchApi('/api/manual-image/'+updated.ids[2]+'/'+imageId)).status,200);
+  assert.equal((await env.DB.prepare('SELECT count(*) AS count FROM machine_manual_groups').first()).count,1);
+  // Deleting the final assignments cleans up shared metadata and KV assets.
+  assert.equal((await fetchApi('/api/admin/machines/'+updated.ids[1],'DELETE')).status,200);
+  assert.equal((await fetchApi('/api/admin/machines/'+updated.ids[2],'DELETE')).status,200);
+  assert.equal((await env.DB.prepare('SELECT count(*) AS count FROM machine_manual_groups').first()).count,0);
+  assert.equal(env.VIDEO_KV.values.has('manual:'+shared.groupId+':'+imageId),false);
+  assert.equal(env.VIDEO_KV.values.has('machine-thumb:'+shared.groupId),false);
+});
+
+test('previously separate identical store copies become one manual on edit',async()=>{
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const stores=[],areas=[];
+  for(const name of ['旧店舗A','旧店舗B']){
+    const store=(await (await fetchApi('/api/admin/stores','POST',{name})).json()).id;
+    stores.push(store);
+    areas.push((await (await fetchApi('/api/admin/areas','POST',{storeId:store,name:'マシン'})).json()).id);
+  }
+  const old={name:'チェストプレス',areaIds:areas,overview:'同じ文章',
+    adjustment:'座面',instructions:'押す',tips:'ゆっくり',safety:'安全'};
+  const oldResult=await (await fetchApi('/api/admin/machines','POST',old)).json();
+  assert.equal(oldResult.ids.length,2);
+  const response=await fetchApi('/api/admin/manual-groups','POST',{
+    ...old,areaName:'マシン',seedMachineId:oldResult.ids[0],
+    storeIds:stores,overview:'一括更新'
+  });
+  assert.equal(response.status,200);
+  const linked=await response.json();
+  assert.deepEqual(linked.ids,oldResult.ids);
+  assert.ok(linked.groupId);
+  const catalog=await (await fetchApi('/api/catalog')).json();
+  for(const mid of linked.ids){
+    const machine=catalog.machines.find(row=>row.id===mid);
+    assert.equal(machine.groupId,linked.groupId);
+    assert.equal(machine.overview,'一括更新');
+  }
+  assert.equal((await env.DB.prepare('SELECT count(*) AS count FROM machine_manual_groups').first()).count,1);
+});
