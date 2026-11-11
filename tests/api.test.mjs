@@ -880,3 +880,39 @@ test('visibility settings are initialized lazily for existing installations', as
   assert.deepEqual((await (await fetchApi('/api/catalog')).json()).stores,[]);
   assert.equal((await (await fetchApi('/api/admin/catalog')).json()).stores[0].isPublic,false);
 });
+
+test('a hidden legacy machine stays hidden when its manual is converted into a shared group', async()=>{
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const stores=[],areaIds=[];
+  for(const name of ['江古田店','大宮店']){
+    const storeId=(await (await fetchApi('/api/admin/stores','POST',{name})).json()).id;
+    stores.push(storeId);
+    areaIds.push((await (await fetchApi('/api/admin/areas','POST',{
+      storeId,name:'マシン'
+    })).json()).id);
+  }
+  const legacy=(await (await fetchApi('/api/admin/machines','POST',{
+    areaId:areaIds[0],name:'ローイング',overview:'',adjustment:'',
+    instructions:'',tips:'',safety:''
+  })).json()).id;
+  const hide=await fetchApi('/api/admin/visibility','POST',{
+    entityType:'machine',ids:[legacy],isPublic:false
+  });
+  assert.equal(hide.status,200);
+  const converted=await fetchApi('/api/admin/manual-groups','POST',{
+    seedMachineId:legacy,name:'ローイング',areaName:'マシン',
+    storeIds:stores,overview:'',adjustment:'',instructions:'',tips:'',safety:''
+  });
+  assert.equal(converted.status,200);
+  const result=await converted.json();
+  assert.equal(result.ids[0],legacy);
+  assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,0);
+  const full=(await (await fetchApi('/api/admin/catalog')).json());
+  assert.equal(full.machines.length,2);
+  assert.ok(full.machines.every(machine=>machine.isPublic===false));
+  assert.equal((await fetchApi('/api/admin/visibility','POST',{
+    entityType:'group',ids:[result.groupId],isPublic:true
+  })).status,200);
+  assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,2);
+});
