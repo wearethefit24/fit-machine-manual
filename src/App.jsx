@@ -89,58 +89,78 @@ function machineIdFromQr(value, machines) {
   return machines.find(item => item.id.toLowerCase() === match[1].toLowerCase())?.id || null;
 }
 
-function QrScanner({ machines, onClose, onFound }) {
+function QrScanner({ machines, cameraRequest, onClose, onFound, onRetry }) {
   const videoRef = useRef(null);
   const scannerRef = useRef(null);
   const finishedRef = useRef(false);
+  const machinesRef = useRef(machines);
+  const onFoundRef = useRef(onFound);
+  machinesRef.current = machines;
+  onFoundRef.current = onFound;
   const [message, setMessage] = useState('カメラを起動しています…');
+  const [retryable, setRetryable] = useState(false);
 
   useEffect(() => {
     let disposed = false;
+    let stream = null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    finishedRef.current = false;
+    setMessage('カメラを起動しています…');
+    setRetryable(false);
+    const stopTracks = source => source?.getTracks().forEach(track => track.stop());
     (async () => {
       try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error('このブラウザではカメラを起動できません。');
-        }
+        // Camera permission is requested directly by the launcher's tap handler.
+        // Start the scanner only after that original request succeeds.
+        if (!cameraRequest) throw new Error('カメラを起動できません。');
+        stream = await cameraRequest;
+        if (disposed) { stopTracks(stream); return; }
+        if (!videoRef.current) throw new Error('カメラの表示先がありません。');
         const { BrowserQRCodeReader } = await import('@zxing/browser');
-        if (disposed || !videoRef.current) return;
+        if (disposed) { stopTracks(stream); return; }
         const reader = new BrowserQRCodeReader();
-        const controls = await reader.decodeFromConstraints(
-          { audio: false, video: { facingMode: { ideal: 'environment' } } },
-          videoRef.current,
+        const controls = await reader.decodeFromStream(stream, videoRef.current,
           (result, error, activeControls) => {
             if (disposed || finishedRef.current || !result) return;
-            const id = machineIdFromQr(result.getText(), machines);
+            const id = machineIdFromQr(result.getText(), machinesRef.current);
             if (!id) {
-              setMessage('このアプリのマシンQRコードを読み取ってください。');
+              setMessage('FIT MANUALで発行したマシンのQRコードを読み取ってください。');
               return;
             }
             finishedRef.current = true;
-            activeControls.stop();
-            onFound(id);
-          }
-        );
-        if (disposed) controls.stop();
+            activeControls?.stop();
+            onFoundRef.current(id);
+          });
+        if (disposed || finishedRef.current) controls.stop();
         else {
           scannerRef.current = controls;
           setMessage('');
         }
-      } catch (err) {
-        if (!disposed) {
-          const denied = ['NotAllowedError','PermissionDeniedError','SecurityError'].includes(err?.name);
-          setMessage(denied ? 'カメラの使用が許可されていません。ブラウザの設定からカメラを許可してください。'
-            : 'カメラを起動できません。カメラへのアクセスを確認して再度お試しください。');
-        }
+      } catch (error) {
+        stopTracks(stream);
+        if (disposed) return;
+        const permissionDenied = ['NotAllowedError','PermissionDeniedError','SecurityError'].includes(error?.name);
+        const notFound = ['NotFoundError','DevicesNotFoundError'].includes(error?.name);
+        const unavailable = ['NotReadableError','TrackStartError'].includes(error?.name);
+        setMessage(permissionDenied
+          ? 'カメラが許可されていません。ブラウザのカメラ設定で「許可」を選択してください。'
+          : notFound
+            ? '利用できるカメラが見つかりません。端末のカメラを確認してください。'
+            : unavailable
+              ? 'ほかのアプリがカメラを使用中の可能性があります。閉じてから再試行してください。'
+              : 'カメラを起動できませんでした。通信状態とカメラの使用許可をご確認ください。');
+        setRetryable(true);
       }
     })();
     return () => {
       disposed = true;
-      scannerRef.current?.stop();
+      try { scannerRef.current?.stop(); } catch { /* Already stopped. */ }
+      scannerRef.current = null;
+      stopTracks(stream);
       document.body.style.overflow = previousOverflow;
     };
-  }, [machines, onFound]);
+  }, [cameraRequest]);
 
   return <div className="qr-scanner-overlay" role="dialog" aria-modal="true" aria-label="マシンQRコード読み取り">
     <div className="qr-scanner-header">
@@ -152,6 +172,7 @@ function QrScanner({ machines, onClose, onFound }) {
       <div className="qr-scanner-corners" aria-hidden="true"><ScanQrCode size={100} strokeWidth={1}/></div>
     </div>
     <p className="qr-scanner-help" role="status">{message || 'マシンに貼られたQRコードをカメラの中央に合わせてください。'}</p>
+    {retryable && <button type="button" className="btn btn-secondary qr-scanner-retry" onClick={onRetry}>カメラを再試行</button>}
     <button type="button" className="btn btn-secondary qr-scanner-done" onClick={onClose}>閉じる</button>
   </div>;
 }
@@ -316,13 +337,44 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
     else navigate('/');
   };
   const [scanOpen, setScanOpen] = useState(false);
+  const [cameraRequest, setCameraRequest] = useState(null);
+  const cameraRequestRef = useRef(null);
+  function requestCamera() {
+    // Call getUserMedia synchronously during the tap, before any dynamic imports.
+    // This also ensures iPhone Safari can prompt for access immediately.
+    let request;
+    try {
+      request = navigator.mediaDevices?.getUserMedia
+        ? navigator.mediaDevices.getUserMedia({
+            audio: false, video: { facingMode: { ideal: 'environment' } }
+          })
+        : Promise.reject(new Error('このブラウザはカメラに対応していません。'));
+    } catch(error) {
+      request = Promise.reject(error);
+    }
+    request.catch(() => {}); // The scanner displays a human-readable error.
+    cameraRequestRef.current = request;
+    setCameraRequest(request);
+    setScanOpen(true);
+  }
+  function closeCamera() {
+    // A permission prompt can resolve after the dialog was closed.
+    const request = cameraRequestRef.current;
+    cameraRequestRef.current = null;
+    if (request) request.then(stream => {
+      stream.getTracks().forEach(track => track.stop());
+    }).catch(() => {});
+    setScanOpen(false);
+    setCameraRequest(null);
+  }
   const showScan = ids.length === 0 || isStorePage || isAreaPage;
   const scanControls = showScan ? <>
-    <button type="button" className="qr-scan-launcher" aria-label="QRコードを読み取る" onClick={() => setScanOpen(true)}>
+    <button type="button" className="qr-scan-launcher" aria-label="QRコードを読み取る" onClick={requestCamera}>
       <ScanQrCode size={44} strokeWidth={2.5}/>
     </button>
-    {scanOpen && <QrScanner machines={catalog.machines} onClose={() => setScanOpen(false)}
-      onFound={id => { setScanOpen(false); navigate('/machine/' + id); }}/>}
+    {scanOpen && <QrScanner machines={catalog.machines} cameraRequest={cameraRequest}
+      onClose={closeCamera} onRetry={requestCamera}
+      onFound={id => { closeCamera(); navigate('/machine/' + id); }}/>}
   </> : null;
   // The viewer home keeps the logo at the top and QR scan fixed to the bottom.
   if (ids.length === 0) {
