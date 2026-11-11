@@ -287,6 +287,153 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
   const [type, id, action, index] = parts;
   const db = env.DB;
 
+
+  if (type === 'manual-groups') {
+    if (!id && method === 'POST') {
+      const d = await body(req);
+      if (!validName(d.name) || !validName(d.areaName))
+        return fail('マシン名とエリアを指定してください。');
+      const storeIds = d.storeIds;
+      if (!Array.isArray(storeIds) || !storeIds.length || storeIds.length > 20 ||
+          storeIds.some(value => !validId(value)) ||
+          new Set(storeIds).size !== storeIds.length)
+        return fail('店舗を1～20件、重複せずに選択してください。');
+      const v = fields(d);
+      await ensureManualGroupTables(db);
+      const stores = (await db.prepare(`SELECT id FROM stores WHERE id IN (${storeIds.map(() => '?').join(',')})`)
+        .bind(...storeIds).all()).results;
+      if (stores.length !== storeIds.length) return fail('選択した店舗が見つかりません。',404);
+      let groupId = d.groupId || null;
+      let current = [];
+      if (groupId) {
+        if (!validId(groupId)) return fail('取扱説明書IDが不正です。');
+        const exists = await db.prepare('SELECT id FROM machine_manual_groups WHERE id=?').bind(groupId).first();
+        if (!exists) return fail('取扱説明書が見つかりません。',404);
+        current = await groupMachines(db,groupId);
+      } else if (d.seedMachineId != null) {
+        if (!validId(d.seedMachineId)) return fail('編集するマシンが不正です。');
+        const base = await db.prepare(`SELECT m.*,a.name AS areaName,a.store_id AS storeId
+          FROM machines m JOIN areas a ON m.area_id=a.id WHERE m.id=?`).bind(d.seedMachineId).first();
+        if (!base) return fail('編集するマシンが見つかりません。',404);
+        const linked = await groupForMachine(db,d.seedMachineId);
+        if (linked) {
+          groupId = linked.id;
+          current = await groupMachines(db,groupId);
+        } else {
+          // Recover copies created by the old multi-store editor only when all
+          // text fields and the machine name match exactly. Never merge unrelated
+          // machines simply because they happen to have the same name.
+          const candidates = (await db.prepare(`SELECT m.id,m.area_id AS areaId,a.store_id AS storeId,a.name AS areaName
+            FROM machines m JOIN areas a ON m.area_id=a.id
+            LEFT JOIN machine_manual_members mm ON mm.machine_id=m.id
+            WHERE mm.machine_id IS NULL AND m.name=? AND a.name=?
+            AND m.overview=? AND m.adjustment=? AND m.instructions=?
+            AND m.tips=? AND m.safety=? ORDER BY m.created_at,m.id`)
+            .bind(base.name,base.areaName,base.overview,base.adjustment,
+              base.instructions,base.tips,base.safety).all()).results;
+          const storeSet = new Set();
+          current = candidates.filter(item => {
+            if (storeSet.has(item.storeId)) return false;
+            storeSet.add(item.storeId); return true;
+          });
+          if (!current.some(item=>item.id===d.seedMachineId)) {
+            const selected = current.findIndex(item=>item.storeId===base.storeId);
+            if (selected >= 0) current.splice(selected,1);
+            current.push({id:base.id,areaId:base.area_id,storeId:base.storeId,areaName:base.areaName});
+          }
+        }
+      }
+      if (!groupId) groupId=crypto.randomUUID();
+      const matching = (await db.prepare(`SELECT id,store_id AS storeId FROM areas
+        WHERE name=? AND store_id IN (${storeIds.map(() => '?').join(',')})
+        ORDER BY position,id`).bind(d.areaName.trim(),...storeIds).all()).results;
+      const matchingMap = new Map();
+      for(const row of matching) if(!matchingMap.has(row.storeId)) matchingMap.set(row.storeId,row.id);
+      const generatedAreas = storeIds.filter(storeId=>!matchingMap.has(storeId))
+        .map(storeId=>({storeId,areaId:crypto.randomUUID()}));
+      for(const area of generatedAreas) matchingMap.set(area.storeId,area.areaId);
+      const currentByStore = new Map(current.map(item=>[item.storeId,item]));
+      const placements = storeIds.map(storeId=>({
+        storeId,areaId:matchingMap.get(storeId),
+        machineId:currentByStore.get(storeId)?.id || crypto.randomUUID()
+      }));
+      const keptIds = new Set(placements.map(item=>item.machineId));
+      const removed = current.filter(item=>!keptIds.has(item.id));
+      const obsoleteImages = [];
+      const obsoleteVideos = [];
+      for(const row of removed){
+        obsoleteImages.push(...await deletingImages(db,'machine',row.id));
+        obsoleteVideos.push(...await deletingVideos(db,'machine',row.id));
+      }
+      const statements = [];
+      if(d.groupId || (d.seedMachineId && current.length && await db.prepare('SELECT id FROM machine_manual_groups WHERE id=?').bind(groupId).first())){
+        statements.push(db.prepare(`UPDATE machine_manual_groups SET name=?,overview=?,adjustment=?,
+          instructions=?,tips=?,safety=?,updated_at=datetime('now') WHERE id=?`)
+          .bind(d.name.trim(),v.overview,v.adjustment,v.instructions,v.tips,v.safety,groupId));
+      } else {
+        statements.push(db.prepare(`INSERT INTO machine_manual_groups
+          (id,name,overview,adjustment,instructions,tips,safety) VALUES(?,?,?,?,?,?,?)`)
+          .bind(groupId,d.name.trim(),v.overview,v.adjustment,v.instructions,v.tips,v.safety));
+      }
+      for(const area of generatedAreas) statements.push(
+        db.prepare(`INSERT INTO areas(id,store_id,name,position)
+          VALUES(?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM areas WHERE store_id=?))`)
+          .bind(area.areaId,area.storeId,d.areaName.trim(),area.storeId));
+      for(const placement of placements){
+        if(currentByStore.get(placement.storeId)?.id===placement.machineId){
+          statements.push(db.prepare(`UPDATE machines SET area_id=?,updated_at=datetime('now') WHERE id=?`)
+            .bind(placement.areaId,placement.machineId));
+        } else {
+          statements.push(db.prepare(`INSERT INTO machines(id,area_id,name,position,overview,adjustment,instructions,tips,safety)
+            VALUES(?,?,?,(SELECT COALESCE(MAX(position),0)+1 FROM machines WHERE area_id=?),?,?,?,?,?)`)
+            .bind(placement.machineId,placement.areaId,d.name.trim(),placement.areaId,
+              v.overview,v.adjustment,v.instructions,v.tips,v.safety));
+        }
+        statements.push(db.prepare(`INSERT INTO machine_manual_members(machine_id,group_id)
+          VALUES(?,?) ON CONFLICT(machine_id) DO UPDATE SET group_id=excluded.group_id`)
+          .bind(placement.machineId,groupId));
+      }
+      for(const row of removed) statements.push(db.prepare('DELETE FROM machines WHERE id=?').bind(row.id));
+      await db.batch(statements);
+      if(obsoleteImages.length || obsoleteVideos.length) {
+        await enqueueCleanup(db,[...obsoleteImages,...obsoleteVideos]);
+        waitUntil(drainCleanup(env));
+      }
+      return json({ok:true,groupId,ids:placements.map(p=>p.machineId),
+        areaIds:placements.map(p=>p.areaId),storeIds},d.groupId||d.seedMachineId?200:201);
+    }
+    if (!validId(id)) return fail('取扱説明書IDが不正です。');
+    if (action === 'images' && validId(index) && method === 'PUT') {
+      const exists = await db.prepare('SELECT id FROM machine_manual_groups WHERE id=?').bind(id).first();
+      if (!exists) return fail('取扱説明書がありません。',404);
+      if (Number(req.headers.get('content-length')||0)>MAX_MANUAL_IMAGE_BYTES)
+        return fail('画像は2MiB以内にしてください。',413);
+      const data=await req.arrayBuffer();
+      if(!data.byteLength||data.byteLength>MAX_MANUAL_IMAGE_BYTES)
+        return fail('画像は2MiB以内にしてください。',413);
+      if(logoMime(data)!=='image/jpeg') return fail('JPEG画像を選択してください。');
+      await env.VIDEO_KV.put(`manual:${id}:${index}`,data);
+      return json({ok:true,imageId:index});
+    }
+    if (action === 'thumbnail' && !index && (method === 'PUT' || method === 'DELETE')) {
+      const exists = await db.prepare('SELECT id FROM machine_manual_groups WHERE id=?').bind(id).first();
+      if(!exists) return fail('取扱説明書がありません。',404);
+      if(method==='DELETE'){
+        await db.prepare('UPDATE machine_manual_groups SET thumbnail_state=-1 WHERE id=?').bind(id).run();
+        await env.VIDEO_KV.delete(THUMBNAIL_KEY(id));
+        return json({ok:true});
+      }
+      if(Number(req.headers.get('content-length')||0)>MAX_THUMBNAIL_BYTES)
+        return fail('画像は2MiB以内にしてください。',413);
+      const data=await req.arrayBuffer();
+      if(!data.byteLength||data.byteLength>MAX_THUMBNAIL_BYTES)
+        return fail('画像は2MiB以内にしてください。',413);
+      if(logoMime(data)!=='image/jpeg') return fail('JPEG画像を選択してください。');
+      await env.VIDEO_KV.put(THUMBNAIL_KEY(id),data);
+      await db.prepare('UPDATE machine_manual_groups SET thumbnail_state=1 WHERE id=?').bind(id).run();
+      return json({ok:true});
+    }
+  }
   if (type === 'stores') {
     if (!id && method === 'POST') {
       const d = await body(req); if (!validName(d.name)) return fail('店舗名を入力してください。');
