@@ -83,11 +83,16 @@ function Alert({ children, kind = 'error' }) { return <div className={`alert ${k
 function Empty({ title, description, icon: Icon = FolderOpen }) { return <div className="empty"><div className="empty-icon"><Icon size={28}/></div><div className="font-semibold text-white">{title}</div><p className="text-sm text-neutral-200 leading-relaxed mt-2">{description}</p></div>; }
 function Back({ onClick, label = '戻る' }) { return <button className="back-btn" onClick={onClick}><ArrowLeft size={18}/>{label}</button>; }
 
-function SiteHeader({ logoRevision, admin = false, onScan }) {
+function SiteHeader({ logoRevision, admin = false, onScan, onBack }) {
   const [loaded, setLoaded] = useState(false);
   useEffect(() => { setLoaded(false); }, [logoRevision]);
   return <header className="site-header" aria-label={admin ? "管理画面のヘッダー" : "ジムのロゴ"}>
     {admin && <span className="site-header-admin-title">管理画面</span>}
+    {!admin && onBack && <button type="button" className="site-header-back"
+      onClick={onBack} aria-label="前の画面に戻る" title="戻る">
+      <ChevronRight className="site-header-back-chevron" size={19} strokeWidth={2} aria-hidden="true"/>
+      <span>戻る</span>
+    </button>}
     <div className="site-logo-box">
       <img src={String('/api/logo?rev=' + logoRevision)} alt="ジムのロゴ"
         className={loaded ? 'site-logo-img' : 'site-logo-img site-logo-loading'}
@@ -475,7 +480,6 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   if (isStorePage) {
     return <div className="min-h-screen">
       <main className="viewer-home viewer-category-home">
-        <div className="viewer-selection-back"><Back onClick={backAction}/></div>
         <h1 className="viewer-home-title">エリアを選択してください</h1>
         {loading ? <div className="viewer-home-buttons"><Skeleton/></div>
           : error ? <div className="viewer-home-buttons"><Alert>{error}</Alert><button type="button" className="btn btn-primary mt-4" onClick={refresh}>再読み込み</button></div>
@@ -495,7 +499,6 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   if (isAreaPage) {
     return <div className="min-h-screen">
       <main className="viewer-machine-picker">
-        <div className="viewer-selection-back"><Back onClick={backAction}/></div>
         <h1 className="viewer-machine-picker-title">マシンを選択してください</h1>
         {loading ? <Skeleton/>
           : error ? <div><Alert>{error}</Alert><button type="button" className="btn btn-primary mt-4" onClick={refresh}>再読み込み</button></div>
@@ -1633,11 +1636,37 @@ export default function App() {
   const [logoRevision, setLogoRevision] = useState(() => Date.now());
   const onLogoChanged = () => setLogoRevision(Date.now());
   const isAdminRoute = route === '/admin' || route.startsWith('/admin/');
+  const pathParts = route.split('/').filter(Boolean);
+  // The header back action follows the same hierarchy as the old in-page back
+  // button. Manual links can be entered directly through a QR scan, in which
+  // case the public machine endpoint supplies the parent area when necessary.
+  const showHeaderBack = !isAdminRoute && ['store', 'area', 'machine'].includes(pathParts[0]) && !!pathParts[1];
+  async function headerBack() {
+    const [kind, id] = pathParts;
+    if (kind === 'store') { navigate('/'); return; }
+    if (kind === 'area') {
+      const currentArea = catalog.areas.find(a => a.id === id);
+      navigate(currentArea?.storeId ? '/store/' + currentArea.storeId : '/');
+      return;
+    }
+    if (kind === 'machine') {
+      const knownMachine = catalog.machines.find(m => m.id === id);
+      if (knownMachine?.areaId) { navigate('/area/' + knownMachine.areaId); return; }
+      try {
+        const machine = await api('/api/public-machine/' + encodeURIComponent(id));
+        if (window.location.pathname !== route) return;
+        navigate(machine?.areaId ? '/area/' + machine.areaId : '/');
+      } catch {
+        if (window.location.pathname === route) navigate('/');
+      }
+    }
+  }
   const page = isAdminRoute
     ? <Admin catalog={catalog} refresh={refresh} error={error} logoRevision={logoRevision} onLogoChanged={onLogoChanged}/>
     : <SwipeBackViewer catalog={catalog} loading={loading} error={error} route={route} navigate={navigate} refresh={refresh}/>;
   return <>
-    <SiteHeader logoRevision={logoRevision} admin={isAdminRoute} onScan={requestCamera}/>
+    <SiteHeader logoRevision={logoRevision} admin={isAdminRoute} onScan={requestCamera}
+      onBack={showHeaderBack ? headerBack : null}/>
     <div className="page-under-header">{page}</div>
     {!isAdminRoute && scanOpen && <QrScanner cameraRequest={cameraRequest}
       onClose={closeCamera} onRetry={requestCamera}
