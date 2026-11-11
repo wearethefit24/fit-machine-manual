@@ -1665,6 +1665,39 @@ html, body {
   .visibility-toggle { min-width: 66px; padding: 7px 5px; font-size: 11px; }
 }
 
+/* Selection pages: the title remains fixed, and only the button content
+   scrolls when its actual height exceeds the available screen. Do not let the
+   100vh minimum on the viewer wrapper create phantom page scrolling. */
+.page-under-header.has-fixed-selection-title {
+  position: fixed;
+  inset: calc(var(--site-header-height) + var(--viewer-selection-title-height)) 0 0;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.page-under-header.has-fixed-selection-title .swipe-back-host,
+.page-under-header.has-fixed-selection-title .swipe-back-current,
+.page-under-header.has-fixed-selection-title .swipe-back-current > .min-h-screen,
+.page-under-header.has-fixed-selection-title .viewer-home,
+.page-under-header.has-fixed-selection-title .viewer-machine-picker {
+  height: 100%;
+  min-height: 0;
+}
+.page-under-header.has-fixed-selection-title .viewer-home,
+.page-under-header.has-fixed-selection-title .viewer-machine-picker {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: none;
+  -webkit-overflow-scrolling: touch;
+  padding-top: 12px;
+  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+}
+.page-under-header.has-fixed-selection-title .viewer-home-buttons,
+.page-under-header.has-fixed-selection-title .viewer-machine-grid {
+  flex-shrink: 0;
+}
+
 /* Interactive right-swipe back navigation on visitor pages only. */
 .swipe-back-host {
   position: relative;
