@@ -462,7 +462,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   // The viewer home keeps the logo at the top; QR scanning is in the fixed header.
   if (ids.length === 0) {
     return <div className="min-h-screen">
-      <main className="viewer-home">
+      <main key={route} className="viewer-home">
         {loading ? <div className="viewer-home-buttons"><Skeleton/></div>
           : error ? <div className="viewer-home-buttons"><Alert>{error}</Alert><button type="button" onClick={refresh} className="btn btn-primary w-full mt-4">再読み込み</button></div>
           : catalog.stores.length ? <div className="viewer-home-buttons">
@@ -481,7 +481,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   // After choosing a store, show areas using the same large white vertical buttons as the home screen.
   if (isStorePage) {
     return <div className="min-h-screen">
-      <main className="viewer-home viewer-category-home">
+      <main key={route} className="viewer-home viewer-category-home">
         {loading ? <div className="viewer-home-buttons"><Skeleton/></div>
           : error ? <div className="viewer-home-buttons"><Alert>{error}</Alert><button type="button" className="btn btn-primary mt-4" onClick={refresh}>再読み込み</button></div>
           : hasMissing ? <div className="viewer-home-buttons"><Empty title="店舗が見つかりません" description="店舗選択画面から選び直してください。"/></div>
@@ -499,7 +499,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   // Machine choices show square thumbnails when available, otherwise the original white tile.
   if (isAreaPage) {
     return <div className="min-h-screen">
-      <main className="viewer-machine-picker">
+      <main key={route} className="viewer-machine-picker">
         {loading ? <Skeleton/>
           : error ? <div><Alert>{error}</Alert><button type="button" className="btn btn-primary mt-4" onClick={refresh}>再読み込み</button></div>
           : hasMissing ? <Empty title="エリアが見つかりません" description="エリア選択画面から選び直してください。"/>
