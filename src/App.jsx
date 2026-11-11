@@ -460,7 +460,6 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   if (ids.length === 0) {
     return <div className="min-h-screen">
       <main className="viewer-home">
-        <h1 className="viewer-home-title">店舗を選択してください</h1>
         {loading ? <div className="viewer-home-buttons"><Skeleton/></div>
           : error ? <div className="viewer-home-buttons"><Alert>{error}</Alert><button type="button" onClick={refresh} className="btn btn-primary w-full mt-4">再読み込み</button></div>
           : catalog.stores.length ? <div className="viewer-home-buttons">
@@ -480,7 +479,6 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   if (isStorePage) {
     return <div className="min-h-screen">
       <main className="viewer-home viewer-category-home">
-        <h1 className="viewer-home-title">エリアを選択してください</h1>
         {loading ? <div className="viewer-home-buttons"><Skeleton/></div>
           : error ? <div className="viewer-home-buttons"><Alert>{error}</Alert><button type="button" className="btn btn-primary mt-4" onClick={refresh}>再読み込み</button></div>
           : hasMissing ? <div className="viewer-home-buttons"><Empty title="店舗が見つかりません" description="店舗選択画面から選び直してください。"/></div>
@@ -499,7 +497,6 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   if (isAreaPage) {
     return <div className="min-h-screen">
       <main className="viewer-machine-picker">
-        <h1 className="viewer-machine-picker-title">マシンを選択してください</h1>
         {loading ? <Skeleton/>
           : error ? <div><Alert>{error}</Alert><button type="button" className="btn btn-primary mt-4" onClick={refresh}>再読み込み</button></div>
           : hasMissing ? <Empty title="エリアが見つかりません" description="エリア選択画面から選び直してください。"/>
@@ -1637,6 +1634,14 @@ export default function App() {
   const onLogoChanged = () => setLogoRevision(Date.now());
   const isAdminRoute = route === '/admin' || route.startsWith('/admin/');
   const pathParts = route.split('/').filter(Boolean);
+  // Keep the three selection headings outside the swipe/scrolling page so
+  // they stay anchored directly beneath the fixed header.
+  const selectionTitle = !isAdminRoute && pathParts.length === 0
+    ? '店舗を選択してください'
+    : !isAdminRoute && pathParts[0] === 'store' && pathParts.length === 2
+      ? 'エリアを選択してください'
+      : !isAdminRoute && pathParts[0] === 'area' && pathParts.length === 2
+        ? 'マシンを選択してください' : null;
   // The header back action follows the same hierarchy as the old in-page back
   // button. Manual links can be entered directly through a QR scan, in which
   // case the public machine endpoint supplies the parent area when necessary.
@@ -1667,7 +1672,10 @@ export default function App() {
   return <>
     <SiteHeader logoRevision={logoRevision} admin={isAdminRoute} onScan={requestCamera}
       onBack={showHeaderBack ? headerBack : null}/>
-    <div className="page-under-header">{page}</div>
+    {selectionTitle && <div className="viewer-fixed-titlebar">
+      <h1 className={`viewer-fixed-title${pathParts[0] === 'area' ? ' is-machine' : ''}`}>{selectionTitle}</h1>
+    </div>}
+    <div className={`page-under-header${selectionTitle ? ' has-fixed-selection-title' : ''}`}>{page}</div>
     {!isAdminRoute && scanOpen && <QrScanner cameraRequest={cameraRequest}
       onClose={closeCamera} onRetry={requestCamera}
       onFound={id => { closeCamera(); navigate('/machine/' + id); }}/>}
