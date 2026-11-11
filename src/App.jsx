@@ -451,7 +451,6 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
           : <>
             <header className="manual-title-area">
               <h1 className="manual-machine-name">{machine.name}</h1>
-              <p className="manual-location">{[currentStore?.name, currentArea?.name].filter(Boolean).join(' / ')}</p>
             </header>
             <div className="manual-guide-sections">
               {GUIDE_SECTIONS.map(({ field, title, kind, Icon }) =>
