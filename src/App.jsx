@@ -883,6 +883,9 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       return area ? [area.storeId,area.id] : null;
     }).filter(Boolean)));
   const groupIdRef = useRef(machine?.groupId || null);
+  // Stable across retries, to avoid duplicate registrations if a response
+  // fails after the server has already committed the first save.
+  const newGroupIdRef = useRef(crypto.randomUUID());
   const createdTargetsRef = useRef(null);
   const [targetsLocked, setTargetsLocked] = useState(false);
   const [name, setName] = useState(machine?.name || '');
@@ -1012,6 +1015,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
       }
       const data = {
         groupId: groupIdRef.current || undefined,
+        newGroupId: !machine ? newGroupIdRef.current : undefined,
         seedMachineId: machine && !groupIdRef.current ? machine.id : undefined,
         name: name.trim(),areaName:selectedAreaName,
         storeIds:destinationSelections.map(item => item.storeId),
