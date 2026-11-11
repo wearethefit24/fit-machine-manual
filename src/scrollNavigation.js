@@ -6,7 +6,12 @@ export function resetPageScroll(win,doc){
   const previous=root.style.scrollBehavior;
   root.style.scrollBehavior='auto';
   try {
-    win.scrollTo({top:0,left:0,behavior:'instant'});
+    try {
+      win.scrollTo({top:0,left:0,behavior:'instant'});
+    } catch {
+      // Older Safari versions may not accept the options object.
+      win.scrollTo(0,0);
+    }
     if(doc.scrollingElement)doc.scrollingElement.scrollTop=0;
     if(doc.body)doc.body.scrollTop=0;
   } finally {
