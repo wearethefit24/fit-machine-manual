@@ -93,6 +93,16 @@ function SiteHeader({ logoRevision, admin = false }) {
         onLoad={() => setLoaded(true)} onError={() => setLoaded(false)} />
       {!loaded && <span className="site-logo-fallback" aria-label="WE ARE THE FIT">WE ARE<br/>THE FIT</span>}
     </div>
+    {admin && <a className="site-header-public-link" href="/"
+      aria-label="表示ページへ移動" title="表示ページへ移動">
+      <svg viewBox="0 0 294 486" xmlns="http://www.w3.org/2000/svg"
+        width="24" height="40" aria-hidden="true" focusable="false">
+        <rect x="0" y="0" width="294" height="486" rx="57" fill="#fff"/>
+        <rect x="29" y="72" width="236" height="322" rx="5" fill="#000"/>
+        <rect x="101" y="24" width="92" height="23" rx="11.5" fill="#000"/>
+        <circle cx="147" cy="438" r="24" fill="#000"/>
+      </svg>
+    </a>}
   </header>;
 }
 
