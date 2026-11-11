@@ -1698,6 +1698,27 @@ html, body {
   flex-shrink: 0;
 }
 
+/* Button navigation: gently reveal the next page's choices without moving
+   the fixed header/title or interfering with the finger-tracked back swipe. */
+@keyframes viewer-content-enter {
+  from { opacity: 0; transform: translate3d(14px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.swipe-back-current .viewer-home-buttons,
+.swipe-back-current .viewer-machine-grid,
+.swipe-back-current .manual-title-area,
+.swipe-back-current .manual-guide-sections {
+  animation: viewer-content-enter 260ms cubic-bezier(.2,.8,.2,1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .swipe-back-current .viewer-home-buttons,
+  .swipe-back-current .viewer-machine-grid,
+  .swipe-back-current .manual-title-area,
+  .swipe-back-current .manual-guide-sections {
+    animation: none;
+  }
+}
+
 /* Interactive right-swipe back navigation on visitor pages only. */
 .swipe-back-host {
   position: relative;
