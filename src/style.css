@@ -161,6 +161,23 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   white-space: nowrap;
   max-width: calc(50% - 83px);
 }
+.site-header-back {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left, 0px));
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  bottom: 6px;
+  display: flex; align-items: center; justify-content: flex-start; gap: 3px;
+  min-width: 44px; max-width: calc(50% - 83px);
+  padding: 0 3px 0 0;
+  border: 0; border-radius: 8px;
+  background: transparent; color: #fff;
+  font-size: 13px; font-weight: 600;
+  white-space: nowrap; z-index: 2;
+  -webkit-tap-highlight-color: transparent;
+}
+.site-header-back-chevron { transform: rotate(180deg); flex-shrink: 0; }
+.site-header-back:focus-visible { outline: 2px solid #22c55e; outline-offset: -2px; }
+.site-header-back:active { opacity: .7; }
 .site-header-public-link {
   position: absolute;
   right: max(12px, env(safe-area-inset-right, 0px));
@@ -314,7 +331,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   margin: 0 auto 18px;
   align-self: stretch;
 }
-.viewer-category-home .viewer-home-title { margin-top: 0; }
+.viewer-category-home .viewer-home-title { margin-top: 9px; }
 .viewer-category-home .viewer-home-buttons { margin-inline: auto; }
 
 .viewer-machine-picker {
@@ -595,7 +612,7 @@ button, a { touch-action: manipulation; }
 .back-btn:active { opacity: .7; }
 
 /* Viewer: gallery-like balance of white space and typography */
-.viewer-home { padding-top: 32px; }
+.viewer-home { padding-top: 20px; }
 .viewer-home-title, .viewer-machine-picker-title {
   letter-spacing: .015em;
   line-height: 1.45;
@@ -612,7 +629,7 @@ button, a { touch-action: manipulation; }
 }
 .viewer-store-button:active { transform: scale(.985); box-shadow: 0 2px 12px rgba(0,0,0,.12); }
 .viewer-selection-back { margin-bottom: 12px; }
-.viewer-machine-picker { padding-top: 24px; }
+.viewer-machine-picker { padding-top: 20px; }
 .viewer-machine-picker-title { margin-bottom: 27px; }
 .viewer-machine-grid {
   width: min(88vw, 540px);
