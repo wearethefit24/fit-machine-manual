@@ -231,6 +231,31 @@ async function deletingImages(db, scope, id) {
     { id: 'thumb:' + machine.id, chunk_count: 1 }
   ]);
 }
+async function affectedManualGroupIds(db,scope,id) {
+  const filter = scope==='store' ? 'a.store_id=?' : scope==='area' ? 'a.id=?' : 'm.id=?';
+  try {
+    const rows=(await db.prepare(`SELECT DISTINCT mm.group_id AS groupId
+      FROM machine_manual_members mm
+      JOIN machines m ON m.id=mm.machine_id
+      JOIN areas a ON a.id=m.area_id WHERE ${filter}`).bind(id).all()).results;
+    return rows.map(row=>row.groupId);
+  } catch(error) { if(isLegacyDatabaseError(error)) return []; throw error; }
+}
+async function pruneEmptyManualGroups(db,groupIds) {
+  for(const groupId of [...new Set(groupIds)]) {
+    const active=await db.prepare('SELECT machine_id FROM machine_manual_members WHERE group_id=? LIMIT 1')
+      .bind(groupId).first();
+    if(active) continue;
+    const group=await db.prepare('SELECT id,adjustment,instructions FROM machine_manual_groups WHERE id=?')
+      .bind(groupId).first();
+    if(!group) continue;
+    await enqueueCleanup(db,[
+      ...imageJobs(group),
+      {id:'thumb:'+group.id,chunk_count:1}
+    ]);
+    await db.prepare('DELETE FROM machine_manual_groups WHERE id=?').bind(groupId).run();
+  }
+}
 async function serveManualImage(req, env, machineId, imageId) {
   if (!validId(machineId) || !validId(imageId)) return fail('画像がありません。', 404);
   const machine = await env.DB.prepare('SELECT adjustment,instructions FROM machines WHERE id=?').bind(machineId).first();
@@ -474,8 +499,9 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
     if (method === 'DELETE') {
       const old = await deletingVideos(db, 'store', id);
       const oldImages = await deletingImages(db, 'store', id);
+      const affectedGroups = await affectedManualGroupIds(db,'store',id);
       const r = await db.prepare('DELETE FROM stores WHERE id=?').bind(id).run();
-      if (r.meta.changes) { await enqueueCleanup(db, [...old, ...oldImages]); waitUntil(drainCleanup(env)); }
+      if (r.meta.changes) { await enqueueCleanup(db, [...old, ...oldImages]); await pruneEmptyManualGroups(db,affectedGroups); waitUntil(drainCleanup(env)); }
       return r.meta.changes ? json({ ok: true }) : fail('店舗がありません。', 404);
     }
   }
@@ -518,8 +544,9 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
     if (method === 'DELETE') {
       const old = await deletingVideos(db, 'area', id);
       const oldImages = await deletingImages(db, 'area', id);
+      const affectedGroups = await affectedManualGroupIds(db,'area',id);
       const r = await db.prepare('DELETE FROM areas WHERE id=?').bind(id).run();
-      if (r.meta.changes) { await enqueueCleanup(db, [...old, ...oldImages]); waitUntil(drainCleanup(env)); }
+      if (r.meta.changes) { await enqueueCleanup(db, [...old, ...oldImages]); await pruneEmptyManualGroups(db,affectedGroups); waitUntil(drainCleanup(env)); }
       return r.meta.changes ? json({ ok: true }) : fail('エリアがありません。', 404);
     }
   }
@@ -643,8 +670,9 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
     if (method === 'DELETE') {
       const old = await deletingVideos(db, 'machine', id);
       const oldImages = await deletingImages(db, 'machine', id);
+      const affectedGroups = await affectedManualGroupIds(db,'machine',id);
       const r = await db.prepare('DELETE FROM machines WHERE id=?').bind(id).run();
-      if (r.meta.changes) { await enqueueCleanup(db, [...old, ...oldImages]); waitUntil(drainCleanup(env)); }
+      if (r.meta.changes) { await enqueueCleanup(db, [...old, ...oldImages]); await pruneEmptyManualGroups(db,affectedGroups); waitUntil(drainCleanup(env)); }
       return r.meta.changes ? json({ ok: true }) : fail('マシンがありません。', 404);
     }
   }
