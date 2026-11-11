@@ -883,7 +883,7 @@ export async function handleApi(context) {
     if ((req.method === 'GET' || req.method === 'HEAD') && path[1] === 'machine-thumbnail' && path.length === 3)
       return serveMachineThumbnail(req, env, path[2]);
     if (path[1] === 'admin') {
-      if (!['GET', 'POST', 'PATCH', 'DELETE', 'PUT'].includes(req.method)) return fail('メソッドが許可されていません。', 405);
+      if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE', 'PUT'].includes(req.method)) return fail('メソッドが許可されていません。', 405);
       if (!['GET', 'HEAD'].includes(req.method)) {
         const origin = req.headers.get('origin');
         if (origin && origin !== url.origin) return fail('不正な送信元です。', 403);
