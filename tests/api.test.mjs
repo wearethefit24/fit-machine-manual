@@ -60,7 +60,7 @@ test('public reading is allowed and admin changes require authentication', async
   assert.equal((await fetchApi('/api/admin/session')).status, 200);
 });
 
-test('store, area, machine CRUD, ordering, QR direct video range and cascade deletion', async () => {
+test('store, area, machine CRUD, ordering, video retirement and cascade deletion', async () => {
   const { env, fetchApi } = fixture();
   await fetchApi('/api/admin/login', 'POST', { password: env.ADMIN_PASSWORD });
   const store1 = (await (await fetchApi('/api/admin/stores','POST',{name:'江古田店'})).json()).id;
@@ -73,18 +73,24 @@ test('store, area, machine CRUD, ordering, QR direct video range and cascade del
   let data = await (await fetchApi('/api/catalog')).json();
   assert.deepEqual(data.machines.map(m=>m.name), ['ラットプル','チェストプレス']);
   assert.equal(data.machines.find(m=>m.id===m1).overview,'胸を鍛える');
-  const init = await fetchApi(`/api/admin/machines/${m1}/video/init`,'POST',{filename:'usage.mp4',mimeType:'video/mp4',size:14});
-  assert.equal(init.status, 201);
-  const video = await init.json();
-  assert.equal(video.chunkCount, 1);
-  assert.equal((await fetchApi(`/api/admin/videos/${video.videoId}/chunks/0`,'PUT',new TextEncoder().encode('VIDEO_FILE_123').buffer)).status, 200);
-  assert.equal((await fetchApi(`/api/admin/videos/${video.videoId}/finish`,'POST',{})).status, 200);
+  // New videos cannot be uploaded, finalized, or watched.
+  const videoId = '123e4567-e89b-42d3-a456-426614174009';
+  assert.equal((await fetchApi(`/api/admin/machines/${m1}/video/init`,'POST',
+    {filename:'usage.mp4',mimeType:'video/mp4',size:14})).status, 404);
+  assert.equal((await fetchApi(`/api/admin/videos/${videoId}/chunks/0`,'PUT',
+    new TextEncoder().encode('VIDEO_FILE_123').buffer)).status, 404);
+  assert.equal((await fetchApi(`/api/admin/videos/${videoId}/finish`,'POST',{})).status, 404);
+  assert.equal((await fetchApi(`/api/video/${videoId}`)).status, 404);
+  // Legacy video bytes are retained until the parent machine is explicitly deleted.
+  await env.DB.prepare("INSERT INTO videos(id,machine_id,filename,mime_type,byte_size,chunk_size,chunk_count,status) VALUES(?,?,?,?,?,?,?,'ready')")
+    .bind(videoId,m1,'legacy.mp4','video/mp4',14,8*1024*1024,1).run();
+  await env.DB.prepare('UPDATE machines SET video_id=? WHERE id=?').bind(videoId,m1).run();
+  await env.VIDEO_KV.put(`video:${videoId}:0`, new TextEncoder().encode('VIDEO_FILE_123').buffer);
   data = await (await fetchApi('/api/catalog')).json();
-  assert.equal(data.machines.find(m=>m.id===m1).videoId,video.videoId);
-  const getVideo = await fetchApi(`/api/video/${video.videoId}`,'GET',undefined,{range:'bytes=2-6'});
-  assert.equal(getVideo.status,206);
-  assert.equal(getVideo.headers.get('content-range'),'bytes 2-6/14');
-  assert.equal(await getVideo.text(),'DEO_F');
+  assert.equal(Object.hasOwn(data.machines.find(m=>m.id===m1),'videoId'),false);
+  assert.equal(Object.hasOwn(data.machines.find(m=>m.id===m1),'videoFilename'),false);
+  assert.equal((await fetchApi(`/api/video/${videoId}`)).status, 404);
+  assert.equal(env.VIDEO_KV.values.has(`video:${videoId}:0`),true);
   assert.equal((await fetchApi(`/api/admin/stores/${store1}`,'DELETE')).status, 200);
   data = await (await fetchApi('/api/catalog')).json();
   assert.equal(data.stores.length,0);
