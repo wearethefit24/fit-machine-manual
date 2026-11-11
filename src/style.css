@@ -1419,3 +1419,63 @@ html, body {
 .manual-multistore-store-heading {
   margin-top: 18px;
 }
+
+/* Hide scrollbars, keep scrolling, and require portrait on touch devices */
+/* Scroll gestures remain available, but scrollbars are not drawn. */
+html, body, #root, * {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+/* Allow regular one-finger scrolling while not permitting browser pinch zoom. */
+html, body {
+  touch-action: pan-x pan-y;
+}
+#portrait-only-message {
+  display: none;
+}
+@media (orientation: landscape) and (pointer: coarse) {
+  html, body {
+    overflow: hidden;
+    height: 100%;
+  }
+  #root {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  #portrait-only-message {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    min-height: 100dvh;
+    padding: max(24px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-right, 0px)) max(24px, env(safe-area-inset-bottom, 0px)) max(24px, env(safe-area-inset-left, 0px));
+    color: #fff;
+    background: #111111;
+    text-align: center;
+    pointer-events: auto;
+  }
+  #portrait-only-message p {
+    margin: 0;
+    font-size: clamp(17px, 4vw, 24px);
+    font-weight: 700;
+    color: #cfcfcf;
+  }
+  #portrait-only-message strong {
+    display: block;
+    font-size: clamp(24px, 5vw, 36px);
+    font-weight: 800;
+    line-height: 1.4;
+  }
+}
