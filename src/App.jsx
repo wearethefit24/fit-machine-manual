@@ -1370,6 +1370,8 @@ function SwipeBackViewer({ catalog, loading, error, route, navigate, refresh }) 
   const navigateRef=useRef(navigate);
   const [showPrevious,setShowPrevious]=useState(false);
   navigateRef.current=navigate;
+  // Clear a preview if the URL changes through the browser's native Back.
+  useEffect(()=>{setShowPrevious(false);},[route]);
 
   useEffect(()=>{
     const host=hostRef.current;
@@ -1400,7 +1402,13 @@ function SwipeBackViewer({ catalog, loading, error, route, navigate, refresh }) 
     }
     function move(event){
       if(!gesture)return;
-      if(event.touches.length!==1){gesture.mode='ignore';return;}
+      if(event.touches.length!==1){
+        if(gesture.mode==='drag'){
+          gesture=null;
+          settle(false);
+        } else gesture.mode='ignore';
+        return;
+      }
       const touch=Array.from(event.touches).find(t=>t.identifier===gesture.id);
       if(!touch)return;
       const dx=touch.clientX-gesture.x;
