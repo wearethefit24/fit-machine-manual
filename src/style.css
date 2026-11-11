@@ -974,8 +974,8 @@ button, a { touch-action: manipulation; }
   border: 1px solid #57c48a;
 }
 .manual-exercise-panel .manual-exercise-part-tips .manual-guide-icon {
-  color: #f8d66c;
-  border: 1px solid #d2ae3e;
+  color: #E8D46F;
+  border: 1px solid #E8D46F;
 }
 .manual-exercise-panel .manual-guide-title {
   font-weight: 850;
@@ -986,7 +986,7 @@ button, a { touch-action: manipulation; }
   font-size: clamp(21px,5.8vw,25px);
 }
 .manual-exercise-panel .manual-exercise-part-tips .manual-guide-title {
-  color: #FFEE1D;
+  color: #E8D46F;
   font-size: clamp(18px,5vw,21px);
 }
 .manual-exercise-panel .manual-steps {
