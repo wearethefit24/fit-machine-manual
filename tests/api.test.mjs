@@ -727,3 +727,41 @@ test('legacy identical manuals link across different areas when edited together'
   assert.equal(machines[0].groupId,machines[1].groupId);
   assert.ok(machines.every(m=>m.overview==='共通化'));
 });
+
+test('legacy photos survive moving a manual to a new store with a different area',async()=>{
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const firstStore=(await (await fetchApi('/api/admin/stores','POST',{name:'店舗A'})).json()).id;
+  const secondStore=(await (await fetchApi('/api/admin/stores','POST',{name:'店舗B'})).json()).id;
+  const firstArea=(await (await fetchApi('/api/admin/areas','POST',{
+    storeId:firstStore,name:'マシン'
+  })).json()).id;
+  const secondArea=(await (await fetchApi('/api/admin/areas','POST',{
+    storeId:secondStore,name:'ウェイト'
+  })).json()).id;
+  const imageId='123e4567-e89b-42d3-a456-426614174099';
+  const adjustment='@FIT_IMG_V1:'+JSON.stringify([{text:'座面を調整',imageId}]);
+  const values={name:'チェストプレス',overview:'',adjustment,
+    instructions:'胸を鍛える',tips:'',safety:''};
+  const legacy=(await (await fetchApi('/api/admin/machines','POST',{
+    ...values,areaId:firstArea
+  })).json()).id;
+  const jpeg=Uint8Array.from([255,216,255,224,0,16,74,70,73,70,0,1]).buffer;
+  assert.equal((await fetchApi('/api/admin/machines/'+legacy+'/images/'+imageId,'PUT',jpeg)).status,200);
+  assert.equal((await fetchApi('/api/admin/machines/'+legacy+'/thumbnail','PUT',jpeg)).status,200);
+  const changed=await fetchApi('/api/admin/manual-groups','POST',{
+    ...values,areaName:'マシン',seedMachineId:legacy,
+    storeSelections:[{storeId:secondStore,areaId:secondArea}]
+  });
+  assert.equal(changed.status,200);
+  const info=await changed.json();
+  assert.equal(info.ids.length,1);
+  assert.notEqual(info.ids[0],legacy);
+  assert.deepEqual(info.areaIds,[secondArea]);
+  const image=await fetchApi('/api/manual-image/'+info.ids[0]+'/'+imageId);
+  assert.equal(image.status,200);
+  assert.deepEqual(new Uint8Array(await image.arrayBuffer()),new Uint8Array(jpeg));
+  assert.equal((await fetchApi('/api/machine-thumbnail/'+info.ids[0])).status,200);
+  assert.equal((await fetchApi('/api/manual-image/'+legacy+'/'+imageId)).status,404);
+  assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,1);
+});
