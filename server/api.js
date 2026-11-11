@@ -269,20 +269,55 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
     if (!id && method === 'POST') {
       const d = await body(req);
       if (!validName(d.name)) return fail('マシン名を入力してください。');
-      // One copy per store, with the destination area chosen for that store.
-      // A D1 batch makes multi-store registration all-or-nothing without a schema migration.
-      const areaIds = d.areaIds === undefined ? [d.areaId] : d.areaIds;
-      if (!Array.isArray(areaIds) || !areaIds.length || areaIds.length > 20 ||
+      // Accept selected stores even when they do not yet have an area.
+      // A store without an area gets a standard "マシン" area within the same D1 transaction.
+      let areaIds, newAreas = [];
+      if (d.storeSelections !== undefined) {
+        const selections = d.storeSelections;
+        if (!Array.isArray(selections) || selections.length < 1 || selections.length > 20 ||
+          selections.some(s => !s || !validId(s.storeId) ||
+            (s.areaId != null && !validId(s.areaId))) ||
+          new Set(selections.map(s => s.storeId)).size !== selections.length) {
+          return fail('登録する店舗を1～20件、重複せずに選択してください。');
+        }
+        const stores = (await db.prepare(`SELECT id FROM stores WHERE id IN (${selections.map(() => '?').join(',')})`)
+          .bind(...selections.map(s => s.storeId)).all()).results;
+        if (stores.length !== selections.length) return fail('選択した店舗が見つかりません。', 404);
+        const provided = selections.filter(s => s.areaId != null);
+        let existing = [];
+        if (provided.length) {
+          existing = (await db.prepare(`SELECT id,store_id AS storeId FROM areas WHERE id IN (${provided.map(() => '?').join(',')})`)
+            .bind(...provided.map(s => s.areaId)).all()).results;
+        }
+        if (existing.length !== provided.length ||
+          provided.some(s => !existing.some(a => a.id === s.areaId && a.storeId === s.storeId))) {
+          return fail('店舗と配置エリアの組み合わせが正しくありません。');
+        }
+        const missingArea = selections.filter(s => s.areaId == null);
+        if (missingArea.length) {
+          const present = (await db.prepare(`SELECT store_id AS storeId FROM areas WHERE store_id IN (${missingArea.map(() => '?').join(',')})`)
+            .bind(...missingArea.map(s => s.storeId)).all()).results;
+          if (present.length) return fail('エリア情報が更新されています。画面を再読み込みしてください。', 409);
+        }
+        const generated = new Map(missingArea.map(s => [s.storeId, crypto.randomUUID()]));
+        areaIds = selections.map(s => s.areaId ?? generated.get(s.storeId));
+        newAreas = missingArea.map(s => db.prepare(`INSERT INTO areas(id,store_id,name,position)
+          VALUES(?,?,'マシン',(SELECT COALESCE(MAX(position),0)+1 FROM areas WHERE store_id=?))`)
+          .bind(generated.get(s.storeId), s.storeId, s.storeId));
+      } else {
+        // Older clients can continue registering a single area or areaIds list.
+        areaIds = d.areaIds === undefined ? [d.areaId] : d.areaIds;
+        if (!Array.isArray(areaIds) || !areaIds.length || areaIds.length > 20 ||
           areaIds.some(areaId => !validId(areaId)) ||
           new Set(areaIds).size !== areaIds.length) {
-        return fail('登録先のエリアを1～20件、重複せずに指定してください。');
-      }
-      const placeholders = areaIds.map(() => '?').join(',');
-      const found = (await db.prepare(`SELECT id,store_id AS storeId FROM areas WHERE id IN (${placeholders})`)
-        .bind(...areaIds).all()).results;
-      if (found.length !== areaIds.length) return fail('指定したエリアが見つかりません。', 404);
-      if (new Set(found.map(area => area.storeId)).size !== areaIds.length) {
-        return fail('1つの店舗につき、登録先エリアを1つ選択してください。');
+          return fail('登録先のエリアを1～20件、重複せずに指定してください。');
+        }
+        const found = (await db.prepare(`SELECT id,store_id AS storeId FROM areas WHERE id IN (${areaIds.map(() => '?').join(',')})`)
+          .bind(...areaIds).all()).results;
+        if (found.length !== areaIds.length) return fail('指定したエリアが見つかりません。', 404);
+        if (new Set(found.map(area => area.storeId)).size !== areaIds.length) {
+          return fail('1つの店舗につき、登録先エリアを1つ選択してください。');
+        }
       }
       const v = fields(d);
       const ids = areaIds.map(() => crypto.randomUUID());
@@ -292,7 +327,7 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
           .bind(ids[index], areaId, d.name.trim(), areaId,
             v.overview, v.adjustment, v.instructions, v.tips, v.safety)
       );
-      await db.batch(statements);
+      await db.batch([...newAreas, ...statements]);
       return json({ ok: true, id: ids[0], ids, areaIds }, 201);
     }
     if (!validId(id)) return fail('マシンIDが不正です。');
