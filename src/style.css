@@ -250,12 +250,13 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
    the vertically scrolling content or horizontally translated swipe layer. */
 :root { --viewer-selection-title-height: 56px; }
 .viewer-fixed-titlebar {
-  position: fixed;
-  top: var(--site-header-height);
+  position: absolute;
+  top: 100%;
   left: 0; right: 0;
   height: var(--viewer-selection-title-height);
-  z-index: 34;
+  z-index: 3;
   display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
   padding: 4px 12px;
   background: var(--app-background, #111111);
 }
