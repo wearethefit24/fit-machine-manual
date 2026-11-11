@@ -289,3 +289,88 @@ test('multi-store step images belong to each registered machine', async () => {
   assert.equal((await fetchApi('/api/manual-image/'+result.ids[0]+'/'+imageId)).status,404);
   assert.equal((await fetchApi('/api/manual-image/'+result.ids[1]+'/'+imageId)).status,200);
 });
+
+test('areas can be registered across multiple stores without affecting older single-store API', async () => {
+  const { env, fetchApi } = fixture();
+  assert.equal((await fetchApi('/api/admin/areas','POST',{name:'ストレッチ',storeIds:[]})).status,401);
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const storeIds=[];
+  for (const name of ['店舗A','店舗B','店舗C']) {
+    storeIds.push((await (await fetchApi('/api/admin/stores','POST',{name})).json()).id);
+  }
+  const name='マシンエリア';
+  const result=await fetchApi('/api/admin/areas','POST',{name,storeIds});
+  assert.equal(result.status,201);
+  const created=await result.json();
+  assert.equal(created.ids.length,3);
+  assert.equal(new Set(created.ids).size,3);
+  assert.equal(created.id,created.ids[0]);
+  assert.deepEqual(created.storeIds,storeIds);
+  let data=await (await fetchApi('/api/catalog')).json();
+  for(let i=0;i<storeIds.length;i++) {
+    const a=data.areas.find(row=>row.id===created.ids[i]);
+    assert.equal(a.storeId,storeIds[i]);
+    assert.equal(a.name,name);
+  }
+  // Copies can be renamed independently.
+  assert.equal((await fetchApi('/api/admin/areas/'+created.ids[1],'PATCH',
+    {name:'店舗Bだけ変更',storeId:storeIds[1]})).status,200);
+  data=await (await fetchApi('/api/catalog')).json();
+  assert.equal(data.areas.find(a=>a.id===created.ids[0]).name,name);
+  assert.equal(data.areas.find(a=>a.id===created.ids[1]).name,'店舗Bだけ変更');
+  assert.equal(data.areas.find(a=>a.id===created.ids[2]).name,name);
+
+  const count=data.areas.length;
+  const missing='123e4567-e89b-42d3-a456-426614174099';
+  for(const invalid of [
+    [],[storeIds[0],storeIds[0]],[storeIds[0],missing],
+    Array(21).fill(storeIds[0])
+  ]) {
+    const failed=await fetchApi('/api/admin/areas','POST',{name:'作成されない',storeIds:invalid});
+    assert.ok([400,404].includes(failed.status));
+  }
+  data=await (await fetchApi('/api/catalog')).json();
+  assert.equal(data.areas.length,count);
+  assert.equal(data.areas.some(a=>a.name==='作成されない'),false);
+
+  // A legacy single-store request still works.
+  const single=await fetchApi('/api/admin/areas','POST',{name:'単独エリア',storeId:storeIds[0]});
+  assert.equal(single.status,201);
+  const legacy=await single.json();
+  assert.deepEqual(legacy.ids,[legacy.id]);
+  assert.deepEqual(legacy.storeIds,[storeIds[0]]);
+});
+
+test('machine registration selects stores without pre-existing areas',async()=>{
+  const { env, fetchApi }=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const first=(await (await fetchApi('/api/admin/stores','POST',{name:'新規店舗A'})).json()).id;
+  const second=(await (await fetchApi('/api/admin/stores','POST',{name:'新規店舗B'})).json()).id;
+  const initial=await (await fetchApi('/api/catalog')).json();
+  assert.equal(initial.areas.length,0);
+  const values={name:'チェストプレス',storeSelections:[
+    {storeId:first,areaId:null},{storeId:second,areaId:null}
+  ],overview:'胸を鍛える',adjustment:'シートの高さを設定',
+  instructions:'胸を張る',tips:'ゆっくり動作',safety:'重量を確認'};
+  const result=await fetchApi('/api/admin/machines','POST',values);
+  assert.equal(result.status,201);
+  const created=await result.json();
+  assert.equal(created.ids.length,2);
+  assert.equal(created.areaIds.length,2);
+  const data=await (await fetchApi('/api/catalog')).json();
+  for(let i=0;i<2;i++){
+    const machine=data.machines.find(m=>m.id===created.ids[i]);
+    const area=data.areas.find(a=>a.id===created.areaIds[i]);
+    assert.equal(machine.areaId,area.id);
+    assert.equal(machine.instructions,values.instructions);
+    assert.equal(area.name,'マシン');
+    assert.equal(area.storeId,i===0?first:second);
+  }
+  const existing=data.areas.find(a=>a.storeId===first).id;
+  const bad=await fetchApi('/api/admin/machines','POST',{
+    ...values,storeSelections:[{storeId:first,areaId:created.areaIds[1]}]
+  });
+  assert.equal(bad.status,400);
+  assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,2);
+  assert.ok(existing);
+});
