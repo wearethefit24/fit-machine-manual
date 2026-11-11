@@ -170,14 +170,6 @@ async function visibilityMap(db) {
     throw error;
   }
 }
-function machinePublished(machine, areaById, storeById, hidden) {
-  const area = areaById.get(machine.areaId);
-  if (!area || hidden.has('area:' + area.id)) return false;
-  if (!storeById.has(area.storeId) || hidden.has('store:' + area.storeId)) return false;
-  return !(machine.groupId
-    ? hidden.has('group:' + machine.groupId)
-    : hidden.has('machine:' + machine.id));
-}
 async function isMachinePublic(db, machineId) {
   if (!validId(machineId)) return false;
   const rows = await db.prepare(`SELECT m.id,m.area_id AS areaId,a.store_id AS storeId
@@ -581,7 +573,18 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
         obsoleteVideos.push(...await deletingVideos(db,'machine',row.id));
       }
       const statements = [];
-      if(d.groupId || (d.seedMachineId && current.length && await db.prepare('SELECT id FROM machine_manual_groups WHERE id=?').bind(groupId).first())){
+      // When a legacy hidden manual is consolidated, it must not accidentally
+      // become public simply because its data moves into a shared group.
+      const existingManualGroup = await db.prepare('SELECT id FROM machine_manual_groups WHERE id=?')
+        .bind(groupId).first();
+      if (!existingManualGroup && current.length) {
+        const previouslyHidden = await visibilityMap(db);
+        if (current.some(member => previouslyHidden.has('machine:' + member.id))) {
+          statements.push(db.prepare(`INSERT INTO visibility_settings
+            (entity_type,entity_id,is_public) VALUES('group',?,0)`).bind(groupId));
+        }
+      }
+      if(existingManualGroup){
         statements.push(db.prepare(`UPDATE machine_manual_groups SET name=?,overview=?,adjustment=?,
           instructions=?,tips=?,safety=?,updated_at=datetime('now') WHERE id=?`)
           .bind(d.name.trim(),v.overview,v.adjustment,v.instructions,v.tips,v.safety,groupId));
