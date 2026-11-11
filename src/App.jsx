@@ -288,6 +288,14 @@ function ManualGuideSection({ field, title, kind, Icon, value, joined = false, m
   </div>}
   </>;
 }
+function MachineChoiceImage({ machineId }) {
+  const [loaded, setLoaded] = useState(false);
+  return <span className="viewer-machine-placeholder" aria-hidden="true">
+    <img className={'viewer-machine-thumbnail' + (loaded ? ' is-ready' : '')}
+      src={'/api/machine-thumbnail/' + machineId} alt="" loading="lazy"
+      onLoad={() => setLoaded(true)} onError={() => setLoaded(false)}/>
+  </span>;
+}
 function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   const ids = route.split('/').filter(Boolean);
   const store = ids[0] === 'store' ? catalog.stores.find(s => s.id === ids[1]) : null;
@@ -356,7 +364,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
     </div>;
   }
 
-  // Machine choices follow the photo-grid layout; until photos are supported, display white square tiles.
+  // Machine choices show square thumbnails when available, otherwise the original white tile.
   if (isAreaPage) {
     return <div className="min-h-screen">
       <main className="viewer-machine-picker">
@@ -369,7 +377,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
               {list.map(item => <button type="button" className="viewer-machine-tile" key={item.id}
                 onClick={() => navigate('/machine/' + item.id)}
                 aria-label={item.name + 'の取扱説明書を開く'}>
-                <span className="viewer-machine-placeholder" aria-hidden="true"/>
+                <MachineChoiceImage machineId={item.id}/>
                 <span className="viewer-machine-name">{item.name}</span>
               </button>)}
             </div>
@@ -575,8 +583,8 @@ function AreasAdmin({ catalog, refresh, notify, tidy }) {
 const initialFields = { overview: '', adjustment: '', instructions: '', tips: '', safety: '' };
 
 
-function ManualImageCropper({ file, onApply, onCancel }) {
-  const WIDTH = 1200, HEIGHT = 900;
+function ManualImageCropper({ file, onApply, onCancel, square = false }) {
+  const WIDTH = square ? 900 : 1200, HEIGHT = 900;
   const canvasRef = useRef(null);
   const imageRef = useRef(null);
   const dragRef = useRef(null);
@@ -646,13 +654,14 @@ function ManualImageCropper({ file, onApply, onCancel }) {
     onApply(blob);
   }
   return <div className="manual-crop-backdrop">
-    <div className="manual-crop-dialog" role="dialog" aria-modal="true" aria-label="画像を4対3に切り取る">
+    <div className="manual-crop-dialog" role="dialog" aria-modal="true"
+      aria-label={square ? '画像を正方形に切り取る' : '画像を4対3に切り取る'}>
       <div className="manual-crop-header">
-        <h3>画像を4:3に切り取り</h3>
+        <h3>{square ? '画像を正方形（1:1）に切り取り' : '画像を4:3に切り取り'}</h3>
         <button type="button" className="manual-crop-close" onClick={onCancel} aria-label="切り取りをキャンセル"><X size={22}/></button>
       </div>
       <p className="manual-crop-help">写真を指で動かして位置を調整できます。スライダーで拡大できます。</p>
-      <div className="manual-crop-canvas-wrap">
+      <div className={'manual-crop-canvas-wrap' + (square ? ' manual-crop-square' : '')}>
         <canvas ref={canvasRef} width={WIDTH} height={HEIGHT}
           className="manual-crop-canvas"
           onPointerDown={pointerDown} onPointerMove={pointerMove}
