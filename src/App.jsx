@@ -45,8 +45,22 @@ function useCatalog() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   async function refresh() {
-    try { const data = await api('/api/catalog'); setCatalog(data); setError(''); }
-    catch (e) { setError(e.message); }
+    try {
+      const adminRoute=window.location.pathname==='/admin' ||
+        window.location.pathname.startsWith('/admin/');
+      let data;
+      if (adminRoute) {
+        // The public view remains available before the admin signs in.
+        try { data=await api('/api/admin/catalog'); }
+        catch(error) {
+          if (!/401/.test(error.message) && error.message!=='管理者認証が必要です。')
+            throw error;
+          data=await api('/api/catalog');
+        }
+      } else data=await api('/api/catalog');
+      setCatalog(data);
+      setError('');
+    } catch (error) { setError(error.message); }
     finally { setLoading(false); }
   }
   useEffect(() => {
@@ -490,6 +504,33 @@ function Chip({ children, active, onClick }) { return <button className={`chip $
 function Field({ title, children, hint }) { return <label className="block"><span className="field-label">{title}</span>{children}{hint && <span className="text-xs text-neutral-300 mt-1.5 block">{hint}</span>}</label>; }
 function Action({ children, pending, className = '', ...props }) { return <button disabled={pending} className={`btn btn-primary ${className}`} {...props}>{pending ? <LoaderCircle size={18} className="animate-spin"/> : <Save size={17}/>} {children}</button>; }
 function SmallActions({ onEdit, onDelete }) { return <div className="flex shrink-0 gap-2"><button title="編集" aria-label="編集" className="icon-button" onClick={onEdit}><Edit3 size={16}/></button><button title="削除" aria-label="削除" className="icon-button danger" onClick={onDelete}><Trash2 size={16}/></button></div>; }
+// Hidden entries remain available to administrators and may be published again.
+async function changeVisibility(entityType,ids,isPublic,refresh,notify) {
+  try {
+    await send('/api/admin/visibility','POST',{entityType,ids,isPublic});
+    await refresh();
+    notify(isPublic ? '公開しました。' : '非公開にしました。');
+  } catch(error) {
+    notify(error.message,true);
+    throw error;
+  }
+}
+function VisibilityToggle({isPublic,onChange,label}) {
+  const [pending,setPending]=useState(false);
+  return <button type="button"
+    className={'visibility-toggle'+(isPublic ? ' is-public' : ' is-private')}
+    aria-label={label+'を'+(isPublic?'非公開':'公開')+'にする'}
+    aria-pressed={isPublic} disabled={pending}
+    onClick={async()=>{
+      setPending(true);
+      try {await onChange(!isPublic);}
+      catch { /* The shared handler has already displayed an error. */ }
+      finally {setPending(false);}
+    }}>
+    {isPublic ? '公開' : '非公開'}
+  </button>;
+}
+
 function QRPanel({ machine }) {
   const [qr, setQr] = useState('');
   const [message, setMessage] = useState('');
@@ -515,7 +556,9 @@ function StoresAdmin({ catalog, refresh, notify, tidy }) {
     try { await api(`/api/admin/stores/${s.id}`, { method: 'DELETE' }); await refresh(); await tidy(); if (editing === s.id) reset(); notify('店舗を削除しました。'); } catch (e) { notify(e.message, true); }
   }
   return <div className="space-y-4"><div className="admin-card"><h3 className="card-title">{editing ? '店舗を編集' : '店舗を追加'}</h3><Field title="店舗名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：江古田店"/></Field><div className="flex gap-2 mt-4"><Action onClick={save} pending={pending} className="flex-1">{editing ? '変更を保存' : '店舗を登録'}</Action>{editing && <button onClick={reset} className="btn btn-secondary"><X size={17}/>取消</button>}</div></div>
-  <div className="admin-card"><h3 className="card-title">登録済み店舗 <span className="count">{catalog.stores.length}</span></h3>{catalog.stores.length ? catalog.stores.map(s => <div key={s.id} className="admin-row"><span className="row-icon"><MapPin size={18}/></span><div className="flex-1 min-w-0"><p className="font-medium text-white truncate">{s.name}</p><p className="text-xs text-neutral-300 mt-0.5">{catalog.areas.filter(a => a.storeId === s.id).length} エリア</p></div><SmallActions onEdit={() => { setEditing(s.id); setName(s.name); }} onDelete={() => remove(s)}/></div>) : <Empty title="店舗はまだありません" description="まず店舗を登録してください。"/>}</div></div>;
+  <div className="admin-card"><h3 className="card-title">登録済み店舗 <span className="count">{catalog.stores.length}</span></h3>{catalog.stores.length ? catalog.stores.map(s => <div key={s.id} className="admin-row"><span className="row-icon"><MapPin size={18}/></span><div className="flex-1 min-w-0"><p className="font-medium text-white truncate">{s.name}</p><p className="text-xs text-neutral-300 mt-0.5">{catalog.areas.filter(a => a.storeId === s.id).length} エリア</p></div><VisibilityToggle isPublic={s.isPublic!==false}
+  onChange={next=>changeVisibility('store',[s.id],next,refresh,notify)} label={s.name}/>
+  <SmallActions onEdit={() => { setEditing(s.id); setName(s.name); }} onDelete={() => remove(s)}/></div>) : <Empty title="店舗はまだありません" description="まず店舗を登録してください。"/>}</div></div>;
 }
 function AreasAdmin({ catalog, refresh, notify, tidy }) {
   const [editing, setEditing] = useState(null);
@@ -625,6 +668,8 @@ function AreasAdmin({ catalog, refresh, notify, tidy }) {
             {' '}{catalog.machines.filter(m => m.areaId === a.id).length} 台
           </p>
         </div>
+        <VisibilityToggle isPublic={a.isPublic!==false}
+          onChange={next=>changeVisibility('area',[a.id],next,refresh,notify)} label={a.name}/>
         <SmallActions onEdit={() => {
           setEditing(a.id); setName(a.name); setStoreId(a.storeId);
         }} onDelete={() => remove(a)}/>
@@ -1245,6 +1290,12 @@ function MachinesAdmin({ catalog, refresh, notify, tidy }) {
                 </div>)}
             </div>
           </div>
+          <VisibilityToggle
+            isPublic={group.members.every(item=>item.isPublic!==false)}
+            onChange={next=>changeVisibility(group.machine.groupId ? 'group' : 'machine',
+              group.machine.groupId ? [group.machine.groupId] : group.members.map(item=>item.id),
+              next,refresh,notify)}
+            label={group.machine.name}/>
           <SmallActions
             onEdit={()=>setSelectedId(group.machine.id)}
             onDelete={()=>remove(group)}/>
