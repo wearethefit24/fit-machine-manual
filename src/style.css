@@ -282,7 +282,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .qr-scanner-video {
   position: absolute; inset: 0; display: block;
   width: 100%; height: 100%; object-fit: cover; background: #111;
+  opacity: 0; transition: opacity 240ms ease-out;
 }
+.qr-scanner-video.is-ready { opacity: 1; }
 .qr-scanner-corners { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; color: #fff; filter: drop-shadow(0 1px 3px #000); }
 .qr-scanner-help { max-width: 410px; text-align: center; color: #fff; font-size: 13px; line-height: 1.8; min-height: 48px; margin-top: 18px; }
 .qr-scanner-retry { width: min(100%, 280px); margin-top: 8px; }
