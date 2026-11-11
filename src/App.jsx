@@ -95,22 +95,23 @@ function SiteHeader({ logoRevision }) {
 }
 
 // Only QR codes issued by this site can open a manual from the built-in camera.
-function machineIdFromQr(value, machines) {
+function machineIdFromQr(value) {
   let url;
   try { url = new URL(value); } catch { return null; }
   if (url.origin !== window.location.origin || url.search || url.hash) return null;
   const match = /^\/machine\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i.exec(url.pathname);
   if (!match) return null;
-  return machines.find(item => item.id.toLowerCase() === match[1].toLowerCase())?.id || null;
+  // Do not reject newly registered machines just because this page's catalog
+  // was loaded before their registration. The destination verifies the ID
+  // against current PUBLIC D1 records instead.
+  return match[1].toLowerCase();
 }
 
-function QrScanner({ machines, cameraRequest, onClose, onFound, onRetry }) {
+function QrScanner({ cameraRequest, onClose, onFound, onRetry }) {
   const videoRef = useRef(null);
   const scannerRef = useRef(null);
   const finishedRef = useRef(false);
-  const machinesRef = useRef(machines);
   const onFoundRef = useRef(onFound);
-  machinesRef.current = machines;
   onFoundRef.current = onFound;
   const [message, setMessage] = useState('カメラを起動しています…');
   const [retryable, setRetryable] = useState(false);
@@ -138,7 +139,7 @@ function QrScanner({ machines, cameraRequest, onClose, onFound, onRetry }) {
         const controls = await reader.decodeFromStream(stream, videoRef.current,
           (result, error, activeControls) => {
             if (disposed || finishedRef.current || !result) return;
-            const id = machineIdFromQr(result.getText(), machinesRef.current);
+            const id = machineIdFromQr(result.getText());
             if (!id) {
               setMessage('FIT MANUALで発行したマシンのQRコードを読み取ってください。');
               return;
@@ -336,12 +337,33 @@ function MachineChoiceImage({ machineId }) {
 }
 function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   const ids = route.split('/').filter(Boolean);
+  const isMachinePage = ids[0] === 'machine';
+  const [machineLookup, setMachineLookup] = useState({id:'',status:'idle',machine:null,error:''});
+  const [lookupRevision, setLookupRevision] = useState(0);
+  useEffect(() => {
+    if (!isMachinePage || !ids[1]) return undefined;
+    let active = true;
+    const id = ids[1];
+    setMachineLookup({id,status:'loading',machine:null,error:''});
+    api('/api/public-machine/' + encodeURIComponent(id),{cache:'no-store'})
+      .then(machine => {
+        if (active) setMachineLookup({id,status:'ready',machine,error:''});
+      })
+      .catch(err => {
+        if (active) setMachineLookup({
+          id,status:err.message.includes('見つかりません') ? 'not-found' : 'error',
+          machine:null,error:err.message
+        });
+      });
+    return () => {active=false;};
+  },[isMachinePage,ids[1],lookupRevision]);
+  const lookedUp = isMachinePage && machineLookup.id === ids[1] ? machineLookup : null;
+  const machine = lookedUp?.status === 'ready' ? lookedUp.machine : null;
+  const machineLoading = isMachinePage && (!lookedUp || lookedUp.status === 'loading');
   const store = ids[0] === 'store' ? catalog.stores.find(s => s.id === ids[1]) : null;
   const area = ids[0] === 'area' ? catalog.areas.find(a => a.id === ids[1]) : null;
-  const machine = ids[0] === 'machine' ? catalog.machines.find(m => m.id === ids[1]) : null;
   const currentStore = store || (area ? catalog.stores.find(s => s.id === area.storeId) : null) || (machine ? catalog.stores.find(s => s.id === catalog.areas.find(a => a.id === machine.areaId)?.storeId) : null);
   const currentArea = area || (machine ? catalog.areas.find(a => a.id === machine.areaId) : null);
-  const isMachinePage = ids[0] === 'machine';
   const isAreaPage = ids[0] === 'area';
   const isStorePage = ids[0] === 'store';
   const title = isMachinePage ? 'マシン取扱説明書' : isAreaPage ? 'マシン選択' : isStorePage ? 'エリア選択' : '店舗選択';
@@ -389,7 +411,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
     <button type="button" className="qr-scan-launcher" aria-label="QRコードを読み取る" onClick={requestCamera}>
       <ScanQrCode size={44} strokeWidth={2.5}/>
     </button>
-    {scanOpen && <QrScanner machines={catalog.machines} cameraRequest={cameraRequest}
+    {scanOpen && <QrScanner cameraRequest={cameraRequest}
       onClose={closeCamera} onRetry={requestCamera}
       onFound={id => { closeCamera(); navigate('/machine/' + id); }}/>}
   </> : null;
@@ -460,9 +482,14 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   if (isMachinePage) {
     return <div className="min-h-screen">
       <main className="shell manual-page">
-        {loading ? <Skeleton/>
-          : error ? <div className="mt-6"><Alert>{error}</Alert><button onClick={refresh} className="btn btn-primary mt-4">再読み込み</button></div>
-          : !machine ? <Empty title="マシンが見つかりません" description="URLが変更されたか、マシンが削除された可能性があります。"/>
+        {machineLoading ? <Skeleton/>
+          : lookedUp?.status === 'error'
+            ? <div className="mt-6"><Alert>{lookedUp.error}</Alert><button type="button"
+                onClick={()=>setLookupRevision(n=>n+1)} className="btn btn-primary mt-4">再読み込み</button></div>
+          : !machine ? <div className="mt-6"><Empty title="マシンが見つかりません"
+              description="マシン・配置先の店舗やエリアが非公開、または登録が完了していない可能性があります。"/>
+              <button type="button" onClick={()=>setLookupRevision(n=>n+1)}
+                className="btn btn-secondary w-full mt-4">もう一度確認する</button></div>
           : <>
             <header className="manual-title-area">
               <h1 className="manual-machine-name">{machine.name}</h1>
