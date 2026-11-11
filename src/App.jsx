@@ -814,7 +814,7 @@ function ManualItemsEditor({ title, field, value, onChange, onCrop, imagePreview
     <div className="manual-items-rows">
       {items.map((item, index) => {
         const imageSrc = item.imageId && (imagePreviews[item.imageId]?.url ||
-          (machineId ? '/api/manual-image/' + machineId + '/' + item.imageId : null));
+          (machineId ? '/api/admin/manual-image/' + machineId + '/' + item.imageId : null));
         return <div className="manual-item-row" key={index}>
           <span className="manual-item-marker" aria-hidden="true">{marker(index)}</span>
           <div className="manual-item-body">
@@ -1152,7 +1152,7 @@ function MachineEditor({ catalog, machine, initialAreaId, refresh, onSaved, onCa
           {thumbnailPreview
             ? <img src={thumbnailPreview} alt="選択画面用画像のプレビュー"/>
             : machine && !thumbnailRemoved
-              ? <img src={'/api/machine-thumbnail/' + machine.id} alt="登録済みの選択画面用画像"
+              ? <img src={'/api/admin/machine-thumbnail/' + machine.id} alt="登録済みの選択画面用画像"
                   onLoad={() => setThumbnailAvailable(true)}
                   onError={() => setThumbnailAvailable(false)}
                   style={{ display: thumbnailAvailable ? 'block' : 'none' }}/>
