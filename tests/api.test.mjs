@@ -593,3 +593,36 @@ test('previously separate identical store copies become one manual on edit',asyn
   }
   assert.equal((await env.DB.prepare('SELECT count(*) AS count FROM machine_manual_groups').first()).count,1);
 });
+
+test('editing a shared manual can link another existing store copy without replacing its QR',async()=>{
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const stores=[],areas=[];
+  for(const name of ['本店','支店']){
+    const sid=(await (await fetchApi('/api/admin/stores','POST',{name})).json()).id;
+    stores.push(sid);
+    areas.push((await (await fetchApi('/api/admin/areas','POST',{storeId:sid,name:'マシン'})).json()).id);
+  }
+  const machine={name:'チェストプレス',overview:'',adjustment:'',instructions:'',
+    tips:'',safety:''};
+  const first=(await (await fetchApi('/api/admin/machines','POST',{
+    ...machine,areaId:areas[0],instructions:'最初の説明'
+  })).json()).id;
+  const second=(await (await fetchApi('/api/admin/machines','POST',{
+    ...machine,areaId:areas[1],instructions:'支店独自の古い説明'
+  })).json()).id;
+  const response=await fetchApi('/api/admin/manual-groups','POST',{
+    ...machine,seedMachineId:first,areaName:'マシン',
+    storeIds:stores,instructions:'全店舗共通の説明'
+  });
+  assert.equal(response.status,200);
+  const result=await response.json();
+  assert.deepEqual(result.ids,[first,second]);
+  const catalog=await (await fetchApi('/api/catalog')).json();
+  assert.equal(catalog.machines.length,2);
+  const one=catalog.machines.find(m=>m.id===first);
+  const two=catalog.machines.find(m=>m.id===second);
+  assert.equal(one.groupId,two.groupId);
+  assert.equal(one.instructions,'全店舗共通の説明');
+  assert.equal(two.instructions,'全店舗共通の説明');
+});
