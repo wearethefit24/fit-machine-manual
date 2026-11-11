@@ -83,7 +83,7 @@ function Alert({ children, kind = 'error' }) { return <div className={`alert ${k
 function Empty({ title, description, icon: Icon = FolderOpen }) { return <div className="empty"><div className="empty-icon"><Icon size={28}/></div><div className="font-semibold text-white">{title}</div><p className="text-sm text-neutral-200 leading-relaxed mt-2">{description}</p></div>; }
 function Back({ onClick, label = '戻る' }) { return <button className="back-btn" onClick={onClick}><ArrowLeft size={18}/>{label}</button>; }
 
-function SiteHeader({ logoRevision, admin = false }) {
+function SiteHeader({ logoRevision, admin = false, onScan }) {
   const [loaded, setLoaded] = useState(false);
   useEffect(() => { setLoaded(false); }, [logoRevision]);
   return <header className="site-header" aria-label={admin ? "管理画面のヘッダー" : "ジムのロゴ"}>
@@ -94,6 +94,10 @@ function SiteHeader({ logoRevision, admin = false }) {
         onLoad={() => setLoaded(true)} onError={() => setLoaded(false)} />
       {!loaded && <span className="site-logo-fallback" aria-label="WE ARE THE FIT">WE ARE<br/>THE FIT</span>}
     </div>
+    {!admin && <button type="button" className="site-header-qr-scan"
+      onClick={onScan} aria-label="QRコードを読み取る" title="QRコードを読み取る">
+      <ScanQrCode size={27} strokeWidth={2.2} aria-hidden="true"/>
+    </button>}
     {admin && <a className="site-header-public-link" href="/" target="_blank" rel="noopener noreferrer"
       aria-label="表示ページへ移動" title="表示ページへ移動">
       <svg viewBox="0 0 294 486" xmlns="http://www.w3.org/2000/svg"
@@ -412,47 +416,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
     else if (isAreaPage && currentStore) navigate(`/store/${currentStore.id}`);
     else navigate('/');
   };
-  const [scanOpen, setScanOpen] = useState(false);
-  const [cameraRequest, setCameraRequest] = useState(null);
-  const cameraRequestRef = useRef(null);
-  function requestCamera() {
-    // Call getUserMedia synchronously during the tap, before any dynamic imports.
-    // This also ensures iPhone Safari can prompt for access immediately.
-    let request;
-    try {
-      request = navigator.mediaDevices?.getUserMedia
-        ? navigator.mediaDevices.getUserMedia({
-            audio: false, video: { facingMode: { ideal: 'environment' } }
-          })
-        : Promise.reject(new Error('このブラウザはカメラに対応していません。'));
-    } catch(error) {
-      request = Promise.reject(error);
-    }
-    request.catch(() => {}); // The scanner displays a human-readable error.
-    cameraRequestRef.current = request;
-    setCameraRequest(request);
-    setScanOpen(true);
-  }
-  function closeCamera() {
-    // A permission prompt can resolve after the dialog was closed.
-    const request = cameraRequestRef.current;
-    cameraRequestRef.current = null;
-    if (request) request.then(stream => {
-      stream.getTracks().forEach(track => track.stop());
-    }).catch(() => {});
-    setScanOpen(false);
-    setCameraRequest(null);
-  }
-  const showScan = ids.length === 0 || isStorePage || isAreaPage;
-  const scanControls = showScan ? <>
-    <button type="button" className="qr-scan-launcher" aria-label="QRコードを読み取る" onClick={requestCamera}>
-      <ScanQrCode size={44} strokeWidth={2.5}/>
-    </button>
-    {scanOpen && <QrScanner cameraRequest={cameraRequest}
-      onClose={closeCamera} onRetry={requestCamera}
-      onFound={id => { closeCamera(); navigate('/machine/' + id); }}/>}
-  </> : null;
-  // The viewer home keeps the logo at the top and QR scan fixed to the bottom.
+  // The viewer home keeps the logo at the top; QR scanning is in the fixed header.
   if (ids.length === 0) {
     return <div className="min-h-screen">
       <main className="viewer-home">
@@ -469,7 +433,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
             </div>
           : <div className="viewer-home-buttons"><Empty title="店舗が登録されていません" description="店舗スタッフによる登録をお待ちください。"/></div>}
       </main>
-      {scanControls}
+      
     </div>;
   }
   // After choosing a store, show areas using the same large white vertical buttons as the home screen.
@@ -488,7 +452,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
             </div>
           : <div className="viewer-home-buttons"><Empty title="エリアが登録されていません" description="店舗スタッフによる登録をお待ちください。"/></div>}
       </main>
-      {scanControls}
+      
     </div>;
   }
 
@@ -511,7 +475,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
             </div>
           : <Empty title="マシンが登録されていません" description="店舗スタッフによる登録をお待ちください。"/>}
       </main>
-      {scanControls}
+      
     </div>;
   }
 
@@ -562,7 +526,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
         <div className="list-caption"><span>{isAreaPage ? 'MACHINES' : isStorePage ? 'AREAS' : 'LOCATIONS'}</span><span>{list.length} ITEMS</span></div>
         {list.map((item, i) => <button className="selection-card group" key={item.id} onClick={() => navigate(`/${isAreaPage ? 'machine' : isStorePage ? 'area' : 'store'}/${item.id}`)}><span className="selection-index">{num(i)}</span><div className="selection-icon">{isAreaPage ? <Dumbbell size={24}/> : isStorePage ? <Layers3 size={24}/> : <MapPin size={24}/>}</div><div className="flex-1 text-left min-w-0"><div className="font-semibold text-white text-[17px] truncate">{item.name}</div><div className="text-xs text-neutral-300 mt-1">{isAreaPage ? '使い方を見る' : isStorePage ? 'マシン一覧を見る' : 'エリア一覧を見る'}</div></div><ChevronRight className="text-white shrink-0 group-hover:translate-x-1 transition-transform" size={22}/></button>)}
       </div> : <Empty title={isAreaPage ? 'マシンが登録されていません' : isStorePage ? 'エリアが登録されていません' : '店舗が登録されていません'} description="店舗スタッフによる登録をお待ちください。"/>}
-    </main>{scanControls}<div className="footer-note">FIT MANUAL <span className="px-2">•</span> TRAIN SMART. STAY SAFE.</div>
+    </main><div className="footer-note">FIT MANUAL <span className="px-2">•</span> TRAIN SMART. STAY SAFE.</div>
   </div>;
 }
 function Chip({ children, active, onClick }) { return <button className={`chip ${active ? 'chip-active' : ''}`} onClick={onClick}>{children}</button>; }
@@ -1598,6 +1562,36 @@ function Admin({ catalog, refresh, error, logoRevision, onLogoChanged }) {
 export default function App() {
   const { catalog, loading, error, refresh } = useCatalog();
   const [route, navigate] = useRoute();
+  const [scanOpen, setScanOpen] = useState(false);
+  const [cameraRequest, setCameraRequest] = useState(null);
+  const cameraRequestRef = useRef(null);
+  function requestCamera() {
+    // Must ask for camera permission directly in the header button's tap.
+    let request;
+    try {
+      request = navigator.mediaDevices?.getUserMedia
+        ? navigator.mediaDevices.getUserMedia({
+            audio: false, video: { facingMode: { ideal: 'environment' } }
+          })
+        : Promise.reject(new Error('このブラウザはカメラに対応していません。'));
+    } catch(error) {
+      request = Promise.reject(error);
+    }
+    request.catch(() => {}); // QrScanner shows the actual permission error.
+    cameraRequestRef.current = request;
+    setCameraRequest(request);
+    setScanOpen(true);
+  }
+  function closeCamera() {
+    // A camera permission prompt can resolve after the dialog is dismissed.
+    const request = cameraRequestRef.current;
+    cameraRequestRef.current = null;
+    if (request) request.then(stream => {
+      stream.getTracks().forEach(track => track.stop());
+    }).catch(() => {});
+    setScanOpen(false);
+    setCameraRequest(null);
+  }
   // Reset AFTER React commits the new route, not before it updates the DOM.
   // This also applies to a QR link opened directly in a new browser tab.
   useLayoutEffect(() => {resetPageScroll(window,document);},[route]);
@@ -1607,5 +1601,11 @@ export default function App() {
   const page = isAdminRoute
     ? <Admin catalog={catalog} refresh={refresh} error={error} logoRevision={logoRevision} onLogoChanged={onLogoChanged}/>
     : <SwipeBackViewer catalog={catalog} loading={loading} error={error} route={route} navigate={navigate} refresh={refresh}/>;
-  return <><SiteHeader logoRevision={logoRevision} admin={isAdminRoute}/><div className="page-under-header">{page}</div></>;
+  return <>
+    <SiteHeader logoRevision={logoRevision} admin={isAdminRoute} onScan={requestCamera}/>
+    <div className="page-under-header">{page}</div>
+    {!isAdminRoute && scanOpen && <QrScanner cameraRequest={cameraRequest}
+      onClose={closeCamera} onRetry={requestCamera}
+      onFound={id => { closeCamera(); navigate('/machine/' + id); }}/>}
+  </>;
 }
