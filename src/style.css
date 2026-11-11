@@ -1529,3 +1529,29 @@ html, body {
   font-weight: 650;
   cursor: pointer;
 }
+
+/* Reversible publication switch for admin store, area and machine rows. */
+.visibility-toggle {
+  flex: 0 0 auto;
+  min-width: 59px;
+  min-height: 36px;
+  padding: 7px 8px;
+  border: 1px solid rgba(255,255,255,.55);
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.3;
+  font-weight: 750;
+  white-space: nowrap;
+  color: #111;
+  background: #fff;
+}
+.visibility-toggle.is-private {
+  background: #242424;
+  color: #dadada;
+  border-color: rgba(255,255,255,.35);
+}
+.visibility-toggle:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.visibility-toggle:disabled { opacity: .45; }
+@media (max-width: 360px) {
+  .visibility-toggle { min-width: 53px; padding: 7px 5px; font-size: 11px; }
+}
