@@ -176,7 +176,9 @@ async function isMachinePublic(db, machineId) {
     FROM machines m JOIN areas a ON a.id=m.area_id WHERE m.id=?`).bind(machineId).first();
   if (!rows) return false;
   const hidden = await visibilityMap(db);
-  if (hidden.has('store:' + rows.storeId) || hidden.has('area:' + rows.areaId)) return false;
+  // Store visibility only hides its navigation entry. Direct QR access is
+  // controlled by the area and the machine/group publication settings.
+  if (hidden.has('area:' + rows.areaId)) return false;
   const group = await groupForMachine(db, machineId);
   return !hidden.has(group ? 'group:' + group.id : 'machine:' + machineId);
 }
@@ -892,14 +894,15 @@ export async function handleApi(context) {
   if (path[0] !== 'api') return fail('APIがありません。', 404);
   try {
     if (req.method === 'GET' && path.length === 2 && path[1] === 'catalog') return json(await catalog(env.DB));
-    // Resolve newly registered QR links against fresh D1 data, independently
-    // of an already-open visitor page's cached /api/catalog response. The
-    // public catalog applies store, area, and machine visibility restrictions.
+    // Resolve QR links from live D1 records, even when the owning store is
+    // hidden from navigation. Area and machine/group publication still apply.
     if (req.method === 'GET' && path.length === 3 && path[1] === 'public-machine') {
       if (!validId(path[2])) return fail('マシンが見つかりません。',404);
-      const publicData=await catalog(env.DB);
-      const machine=publicData.machines.find(item=>item.id.toLowerCase()===path[2].toLowerCase());
-      return machine ? json(machine) : fail('マシンが見つかりません。非公開設定または登録状態をご確認ください。',404);
+      const fullData=await catalog(env.DB,{admin:true});
+      const machine=fullData.machines.find(item=>item.id.toLowerCase()===path[2].toLowerCase());
+      if (!machine || !(await isMachinePublic(env.DB,machine.id)))
+        return fail('マシンが見つかりません。非公開設定または登録状態をご確認ください。',404);
+      return json(machine);
     }
     if ((req.method === 'GET' || req.method === 'HEAD') && path.length === 2 && path[1] === 'logo') return serveLogo(req, env);
     if ((req.method === 'GET' || req.method === 'HEAD') && path[1] === 'manual-image' && path.length === 4)
