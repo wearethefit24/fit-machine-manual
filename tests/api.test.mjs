@@ -766,7 +766,7 @@ test('legacy photos survive moving a manual to a new store with a different area
   assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,1);
 });
 
-test('publish controls hide nested public catalog data and direct images but keep admin access', async () => {
+test('publish controls hide navigation entries while store-hidden QR and images remain public', async () => {
   const {env,fetchApi}=fixture();
   const jpeg=Uint8Array.from([255,216,255,224,0,16,74,70,73,70,0,1]).buffer;
   const imageId='123e4567-e89b-42d3-a456-426614174098';
@@ -797,8 +797,10 @@ test('publish controls hide nested public catalog data and direct images but kee
   assert.equal((await fetchApi(thumbnail)).status,200);
   assert.equal((await setVisibility('store',[storeId],false)).status,200);
   assert.deepEqual(await publicCatalog(),{stores:[],areas:[],machines:[]});
-  assert.equal((await fetchApi(photo)).status,404);
-  assert.equal((await fetchApi(thumbnail,'HEAD')).status,404);
+  // Store visibility must affect buttons, not already issued QR links.
+  assert.equal((await fetchApi('/api/public-machine/'+machineId)).status,200);
+  assert.equal((await fetchApi(photo)).status,200);
+  assert.equal((await fetchApi(thumbnail,'HEAD')).status,200);
   assert.equal((await fetchApi('/api/admin/manual-image/'+machineId+'/'+imageId)).status,200);
   assert.equal((await fetchApi('/api/admin/machine-thumbnail/'+machineId)).status,200);
   let full=await adminCatalog();
@@ -812,9 +814,11 @@ test('publish controls hide nested public catalog data and direct images but kee
   assert.equal((await setVisibility('area',[areaId],false)).status,200);
   assert.equal((await publicCatalog()).stores.length,1);
   assert.equal((await publicCatalog()).areas.length,0);
+  assert.equal((await fetchApi('/api/public-machine/'+machineId)).status,404);
   assert.equal((await fetchApi(photo)).status,404);
   assert.equal((await setVisibility('machine',[machineId],false)).status,200);
   assert.equal((await setVisibility('area',[areaId],true)).status,200);
+  assert.equal((await fetchApi('/api/public-machine/'+machineId)).status,404);
   assert.equal((await publicCatalog()).areas.length,1);
   assert.equal((await publicCatalog()).machines.length,0);
   assert.equal((await fetchApi(thumbnail)).status,404);
@@ -863,6 +867,53 @@ test('a shared manual publish toggle affects every store placement while store v
   assert.equal(partial.machines[0].id,group.ids[1]);
   assert.equal((await post('store',[stores[0]],true)).status,200);
   assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,2);
+});
+
+
+test('QR works for each of four shared placements when only store A is listed', async()=>{
+  const {env,fetchApi}=fixture();
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const stores=[],areas=[];
+  for(const name of ['A店','B店','C店','D店']){
+    const storeId=(await (await fetchApi('/api/admin/stores','POST',{name})).json()).id;
+    stores.push(storeId);
+    areas.push((await (await fetchApi('/api/admin/areas','POST',{
+      storeId,name:'マシン'
+    })).json()).id);
+  }
+  const imageId=crypto.randomUUID();
+  const jpeg=Uint8Array.from([255,216,255,224,0,16,74,70,73,70,0,1]).buffer;
+  const group=(await (await fetchApi('/api/admin/manual-groups','POST',{
+    name:'①のマシン',areaName:'マシン',
+    storeSelections:stores.map((storeId,i)=>({storeId,areaId:areas[i]})),
+    overview:'共有説明',
+    adjustment:'@FIT_IMG_V1:'+JSON.stringify([{text:'調整',imageId}]),
+    instructions:'',tips:'',safety:''
+  })).json());
+  assert.equal(group.ids.length,4);
+  assert.equal((await fetchApi('/api/admin/machines/'+group.ids[0]+'/images/'+imageId,
+    'PUT',jpeg)).status,200);
+  for(const storeId of stores.slice(1)){
+    assert.equal((await fetchApi('/api/admin/visibility','POST',{
+      entityType:'store',ids:[storeId],isPublic:false
+    })).status,200);
+  }
+  const listed=await (await fetchApi('/api/catalog')).json();
+  assert.deepEqual(listed.stores.map(s=>s.id),[stores[0]]);
+  assert.deepEqual(listed.areas.map(a=>a.id),[areas[0]]);
+  assert.deepEqual(listed.machines.map(m=>m.id),[group.ids[0]]);
+  for(const machineId of group.ids){
+    const direct=await fetchApi('/api/public-machine/'+machineId);
+    assert.equal(direct.status,200,'QR should resolve for '+machineId);
+    assert.equal((await direct.json()).overview,'共有説明');
+    assert.equal((await fetchApi('/api/manual-image/'+machineId+'/'+imageId)).status,200);
+  }
+  // Group publication still controls every QR regardless of store visibility.
+  assert.equal((await fetchApi('/api/admin/visibility','POST',{
+    entityType:'group',ids:[group.groupId],isPublic:false
+  })).status,200);
+  for(const machineId of group.ids)
+    assert.equal((await fetchApi('/api/public-machine/'+machineId)).status,404);
 });
 
 test('visibility settings are initialized lazily for existing installations', async()=>{
@@ -1047,5 +1098,6 @@ test('newly registered machine QR lookup resolves from live public D1 records', 
   assert.equal((await fetchApi('/api/admin/visibility','POST',{
     entityType:'store',ids:[store],isPublic:false
   })).status,200);
-  assert.equal((await fetchApi('/api/public-machine/'+second.ids[0])).status,404);
+  assert.equal((await (await fetchApi('/api/catalog')).json()).machines.length,0);
+  assert.equal((await fetchApi('/api/public-machine/'+second.ids[0])).status,200);
 });
