@@ -176,9 +176,8 @@ async function isMachinePublic(db, machineId) {
     FROM machines m JOIN areas a ON a.id=m.area_id WHERE m.id=?`).bind(machineId).first();
   if (!rows) return false;
   const hidden = await visibilityMap(db);
-  // Store visibility only hides its navigation entry. Direct QR access is
-  // controlled by the area and the machine/group publication settings.
-  if (hidden.has('area:' + rows.areaId)) return false;
+  // Store and area visibility only hide navigation buttons. Direct QR access,
+  // manual images, and thumbnails depend on machine/group publication only.
   const group = await groupForMachine(db, machineId);
   return !hidden.has(group ? 'group:' + group.id : 'machine:' + machineId);
 }
@@ -894,8 +893,8 @@ export async function handleApi(context) {
   if (path[0] !== 'api') return fail('APIがありません。', 404);
   try {
     if (req.method === 'GET' && path.length === 2 && path[1] === 'catalog') return json(await catalog(env.DB));
-    // Resolve QR links from live D1 records, even when the owning store is
-    // hidden from navigation. Area and machine/group publication still apply.
+    // Resolve QR links from live D1 records regardless of store/area
+    // navigation visibility. Machine/group publication still applies.
     if (req.method === 'GET' && path.length === 3 && path[1] === 'public-machine') {
       if (!validId(path[2])) return fail('マシンが見つかりません。',404);
       const fullData=await catalog(env.DB,{admin:true});
