@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {getViewerParentRoute,shouldCompleteSwipe} from './swipeNavigation.js';
+import {manualReturnPath} from './manualNavigation.js';
 import {resetPageScroll} from './scrollNavigation.js';
 import {loadThumbnail,peekThumbnail,retainThumbnail,releaseThumbnail,warmThumbnails} from './thumbnailCache.js';
 
@@ -37,8 +38,10 @@ function useRoute() {
     window.addEventListener('popstate', update);
     return () => window.removeEventListener('popstate', update);
   }, []);
-  function navigate(path) {
-    if (window.location.pathname !== path) window.history.pushState({}, '', path);
+  function navigate(path, state = {}) {
+    // Only a machine selected through the on-screen list receives a return
+    // location. QR scans and external links use the default empty state.
+    if (window.location.pathname !== path) window.history.pushState(state, '', path);
     setRoute(path);
   }
   return [route, navigate];
@@ -494,8 +497,10 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   const list = isStorePage ? catalog.areas.filter(a => a.storeId === store?.id) : isAreaPage ? catalog.machines.filter(m => m.areaId === area?.id) : catalog.stores;
   const hasMissing = (isStorePage && !store) || (isAreaPage && !area) || (isMachinePage && !machine);
   const backAction = () => {
-    if (isMachinePage && currentArea) navigate(`/area/${currentArea.id}`);
-    else if (isAreaPage && currentStore) navigate(`/store/${currentStore.id}`);
+    if (isMachinePage) {
+      // Scanned/shared QR links have no list origin and return to store selection.
+      navigate(manualReturnPath(ids[1], window.history.state, catalog.areas));
+    } else if (isAreaPage && currentStore) navigate(`/store/${currentStore.id}`);
     else navigate('/');
   };
   // The viewer home keeps the logo at the top; QR scanning is in the fixed header.
@@ -544,7 +549,9 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
           : hasMissing ? <Empty title="エリアが見つかりません" description="エリア選択画面から選び直してください。"/>
           : list.length ? <div className="viewer-machine-grid">
               {list.map(item => <button type="button" className="viewer-machine-tile" key={item.id}
-                onClick={() => navigate('/machine/' + item.id)}
+                onClick={() => navigate('/machine/' + item.id, {
+                  manualListOrigin: {machineId:item.id,areaId:area.id}
+                })}
                 aria-label={item.name + 'の取扱説明書を開く'}>
                 <MachineChoiceImage machineId={item.id}/>
                 <span className="viewer-machine-name">{item.name}</span>
