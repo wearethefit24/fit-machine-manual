@@ -9,6 +9,7 @@ import {
 import QRCode from 'qrcode';
 import {getViewerParentRoute,shouldCompleteSwipe} from './swipeNavigation.js';
 import {manualReturnPath} from './manualNavigation.js';
+import {applyPreferredQrZoom} from './cameraZoom.js';
 import {resetPageScroll} from './scrollNavigation.js';
 import {loadThumbnail,peekThumbnail,retainThumbnail,releaseThumbnail,warmThumbnails} from './thumbnailCache.js';
 
@@ -144,6 +145,9 @@ function QrScanner({ cameraRequest, onClose, onFound, onRetry }) {
   const [message, setMessage] = useState('カメラを起動しています…');
   const [retryable, setRetryable] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
+  // Start at 1.5x on every launch. Prefer native camera zoom; otherwise
+  // crop the preview digitally without changing its layout dimensions.
+  const [useCssZoom, setUseCssZoom] = useState(true);
 
   useEffect(() => {
     let disposed = false;
@@ -182,6 +186,7 @@ function QrScanner({ cameraRequest, onClose, onFound, onRetry }) {
     setMessage('カメラを起動しています…');
     setRetryable(false);
     setVideoReady(false);
+    setUseCssZoom(true);
     const stopTracks = source => source?.getTracks().forEach(track => track.stop());
     (async () => {
       try {
@@ -190,6 +195,11 @@ function QrScanner({ cameraRequest, onClose, onFound, onRetry }) {
         if (!cameraRequest) throw new Error('カメラを起動できません。');
         stream = await cameraRequest;
         if (disposed) { stopTracks(stream); return; }
+        // Apply zoom before giving the live stream to ZXing, so native zoom
+        // affects QR decoding as well as the visible picture.
+        const nativeZoom = await applyPreferredQrZoom(stream.getVideoTracks()[0]);
+        if (disposed) { stopTracks(stream); return; }
+        setUseCssZoom(!nativeZoom);
         if (!videoRef.current) throw new Error('カメラの表示先がありません。');
         const { BrowserQRCodeReader } = await import('@zxing/browser');
         if (disposed) { stopTracks(stream); return; }
@@ -249,7 +259,7 @@ function QrScanner({ cameraRequest, onClose, onFound, onRetry }) {
       <button type="button" className="qr-scanner-close" onClick={onClose} aria-label="カメラを閉じる"><X size={24}/></button>
     </div>
     <div className="qr-scanner-viewfinder">
-      <video ref={videoRef} autoPlay playsInline muted className={`qr-scanner-video${videoReady ? ' is-ready' : ''}`}/>
+      <video ref={videoRef} autoPlay playsInline muted className={`qr-scanner-video${videoReady ? ' is-ready' : ''}${useCssZoom ? ' is-digital-zoom' : ''}`}/>
       <div className="qr-scanner-corners" aria-hidden="true"><ScanQrCode size={400} strokeWidth={0.5}/></div>
     </div>
     <p className="qr-scanner-help" role="status">{message || 'マシンに貼られたQRコードをカメラの中央に合わせてください。'}</p>
