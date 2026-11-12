@@ -432,11 +432,47 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   const lookedUp = isMachinePage && machineLookup.id === ids[1] ? machineLookup : null;
   const machine = lookedUp?.status === 'ready' ? lookedUp.machine : null;
   const machineLoading = isMachinePage && (!lookedUp || lookedUp.status === 'loading');
-  // Loading the complete manual replaces a short placeholder. Reset again
-  // after that layout change so the machine name stays above the overview.
+  // iOS Safari can restore a previous scroll offset *after* the QR page
+  // initially mounts. Disable restoration while a manual is open, then reset
+  // again after the async manual replaces the loading skeleton.
   useLayoutEffect(() => {
-    if(isMachinePage && lookedUp?.status==='ready')resetPageScroll(window,document);
-  },[isMachinePage,ids[1],lookedUp?.status]);
+    if (!isMachinePage) return undefined;
+    const previous = window.history.scrollRestoration;
+    window.history.scrollRestoration = 'manual';
+    return () => { window.history.scrollRestoration = previous; };
+  }, [isMachinePage]);
+  useLayoutEffect(() => {
+    if (!isMachinePage || lookedUp?.status !== 'ready') return undefined;
+    let cancelled = false;
+    let interacted = false;
+    const resetIfIdle = () => {
+      if (!cancelled && !interacted) resetPageScroll(window, document);
+    };
+    const markInteraction = () => { interacted = true; };
+    // Do not yank the screen back if a visitor starts reading and scrolling.
+    window.addEventListener('touchstart', markInteraction, { passive: true });
+    window.addEventListener('wheel', markInteraction, { passive: true });
+    window.addEventListener('keydown', markInteraction);
+    window.addEventListener('pageshow', resetIfIdle);
+    resetIfIdle();
+    const frame1 = window.requestAnimationFrame(() => {
+      resetIfIdle();
+      frame2 = window.requestAnimationFrame(resetIfIdle);
+    });
+    let frame2 = null;
+    // Safari can finish its native scroll restoration after the first paint.
+    const later = window.setTimeout(resetIfIdle, 220);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame1);
+      if (frame2 !== null) window.cancelAnimationFrame(frame2);
+      window.clearTimeout(later);
+      window.removeEventListener('touchstart', markInteraction);
+      window.removeEventListener('wheel', markInteraction);
+      window.removeEventListener('keydown', markInteraction);
+      window.removeEventListener('pageshow', resetIfIdle);
+    };
+  }, [isMachinePage, ids[1], lookedUp?.status]);
   const store = ids[0] === 'store' ? catalog.stores.find(s => s.id === ids[1]) : null;
   const area = ids[0] === 'area' ? catalog.areas.find(a => a.id === ids[1]) : null;
   const currentStore = store || (area ? catalog.stores.find(s => s.id === area.storeId) : null) || (machine ? catalog.stores.find(s => s.id === catalog.areas.find(a => a.id === machine.areaId)?.storeId) : null);
