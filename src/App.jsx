@@ -455,18 +455,21 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
     window.addEventListener('keydown', markInteraction);
     window.addEventListener('pageshow', resetIfIdle);
     resetIfIdle();
+    let frame2 = null;
     const frame1 = window.requestAnimationFrame(() => {
       resetIfIdle();
       frame2 = window.requestAnimationFrame(resetIfIdle);
     });
-    let frame2 = null;
-    // Safari can finish its native scroll restoration after the first paint.
+    // Safari may finish restoring the page after paint or after the browser's
+    // initial visual-viewport adjustment; stop correcting after a user gesture.
     const later = window.setTimeout(resetIfIdle, 220);
+    const finalCheck = window.setTimeout(resetIfIdle, 700);
     return () => {
       cancelled = true;
       window.cancelAnimationFrame(frame1);
       if (frame2 !== null) window.cancelAnimationFrame(frame2);
       window.clearTimeout(later);
+      window.clearTimeout(finalCheck);
       window.removeEventListener('touchstart', markInteraction);
       window.removeEventListener('wheel', markInteraction);
       window.removeEventListener('keydown', markInteraction);
