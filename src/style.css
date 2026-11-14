@@ -1801,11 +1801,21 @@ html, body {
   from { opacity: 0; transform: translate3d(0, 14px, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
+/* Instruction text must be fully opaque as soon as its async content loads.
+   On mobile Safari a long opacity animation can stay visibly faded until the
+   next touch/repaint, so manual pages animate position only. */
+@keyframes manual-content-enter {
+  from { transform: translate3d(0, 14px, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
 .swipe-back-current .viewer-home-buttons,
-.swipe-back-current .viewer-machine-grid,
+.swipe-back-current .viewer-machine-grid {
+  animation: viewer-content-enter 2500ms cubic-bezier(.2,.8,.2,1) both;
+}
 .swipe-back-current .manual-title-area,
 .swipe-back-current .manual-guide-sections {
-  animation: viewer-content-enter 2500ms cubic-bezier(.2,.8,.2,1) both;
+  opacity: 1;
+  animation: manual-content-enter 2500ms cubic-bezier(.2,.8,.2,1) both;
 }
 @media (prefers-reduced-motion: reduce) {
   .swipe-back-current .viewer-home-buttons,
