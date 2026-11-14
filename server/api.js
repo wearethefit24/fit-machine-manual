@@ -690,6 +690,17 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
     }
   }
   if (type === 'stores') {
+    if (id === 'reorder' && !action && method === 'POST') {
+      const d = await body(req);
+      const ids = d.ids;
+      const current = (await db.prepare('SELECT id FROM stores').all()).results.map(row => row.id);
+      if (!Array.isArray(ids) || !ids.length || ids.length !== current.length ||
+          new Set(ids).size !== ids.length || !ids.every(value => current.includes(value)))
+        return fail('並び順が一致していません。ページを再読み込みしてください。', 409);
+      await db.batch(ids.map((storeId,i) =>
+        db.prepare('UPDATE stores SET position=? WHERE id=?').bind(i+1,storeId)));
+      return json({ok:true});
+    }
     if (!id && method === 'POST') {
       const d = await body(req); if (!validName(d.name)) return fail('店舗名を入力してください。');
       const newId = crypto.randomUUID();
@@ -712,6 +723,22 @@ async function adminRequest({ request: req, env, waitUntil }, parts) {
     }
   }
   if (type === 'areas') {
+    // Each store has an independent order for the area selection screen.
+    // Do not mix areas from different stores in one reorder request.
+    if (id === 'reorder' && !action && method === 'POST') {
+      const d = await body(req);
+      if (!validId(d.storeId)) return fail('店舗IDが不正です。');
+      const ids = d.ids;
+      const current = (await db.prepare('SELECT id FROM areas WHERE store_id=?')
+        .bind(d.storeId).all()).results.map(row => row.id);
+      if (!Array.isArray(ids) || !ids.length || ids.length !== current.length ||
+          new Set(ids).size !== ids.length || !ids.every(value => current.includes(value)))
+        return fail('並び順が一致していません。ページを再読み込みしてください。', 409);
+      await db.batch(ids.map((areaId,i) =>
+        db.prepare('UPDATE areas SET position=? WHERE id=? AND store_id=?')
+          .bind(i+1,areaId,d.storeId)));
+      return json({ok:true});
+    }
     if (!id && method === 'POST') {
       const d = await body(req);
       if (!validName(d.name)) return fail('エリア名を入力してください。');
