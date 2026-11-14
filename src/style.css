@@ -1309,17 +1309,85 @@ html, body {
 .manual-crop-ratio-options button.is-selected {
   background: #fff; color: #111; border-color: #fff;
 }
-.manual-crop-custom-ratio {
-  display: flex; align-items: center; flex-wrap: wrap;
-  gap: 9px; margin-top: 12px; font-size: 13px;
+/* Free-form crop: the full photo stays fixed while the selection moves. */
+.manual-free-crop-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
 }
-.manual-crop-custom-ratio label { display: flex; align-items: center; gap: 7px; }
-.manual-crop-custom-ratio input {
-  width: 68px; min-height: 40px; padding: 7px; color: #fff;
-  border: 1px solid rgba(255,255,255,.55); border-radius: 8px; background: #111;
+.manual-free-crop-frame {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 2000px rgba(0,0,0,.54), 0 0 0 1px rgba(0,0,0,.4) inset;
+  z-index: 1;
+  cursor: move;
+  touch-action: none;
+  user-select: none;
 }
-.manual-crop-ratio-caption { color: #bbb; font-size: 11px; }
-.manual-crop-custom-ratio .manual-crop-error { width: 100%; margin: 0; }
+.manual-free-crop-frame:focus-visible { outline: 2px solid #ffd166; outline-offset: 3px; }
+.manual-free-crop-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to right,transparent 33.2%,rgba(255,255,255,.55) 33.33%,rgba(255,255,255,.55) 33.5%,transparent 33.65%,transparent 66.5%,rgba(255,255,255,.55) 66.66%,rgba(255,255,255,.55) 66.83%,transparent 67%),
+    linear-gradient(to bottom,transparent 33.2%,rgba(255,255,255,.55) 33.33%,rgba(255,255,255,.55) 33.5%,transparent 33.65%,transparent 66.5%,rgba(255,255,255,.55) 66.66%,rgba(255,255,255,.55) 66.83%,transparent 67%);
+}
+.manual-free-crop-handle {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%,-50%);
+  touch-action: none;
+  z-index: 2;
+}
+.manual-free-crop-handle::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  top: 10px;
+  left: 10px;
+  border-color: #fff;
+  border-style: solid;
+  filter: drop-shadow(0 0 2px #000);
+}
+.manual-free-crop-handle.handle-nw { left: 0; top: 0; cursor: nwse-resize; }
+.manual-free-crop-handle.handle-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.manual-free-crop-handle.handle-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.manual-free-crop-handle.handle-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.manual-free-crop-handle.handle-n { left: 50%; top: 0; cursor: ns-resize; }
+.manual-free-crop-handle.handle-s { left: 50%; top: 100%; cursor: ns-resize; }
+.manual-free-crop-handle.handle-e { left: 100%; top: 50%; cursor: ew-resize; }
+.manual-free-crop-handle.handle-w { left: 0; top: 50%; cursor: ew-resize; }
+.manual-free-crop-handle.handle-nw::after { border-width: 3px 0 0 3px; }
+.manual-free-crop-handle.handle-ne::after { border-width: 3px 3px 0 0; }
+.manual-free-crop-handle.handle-se::after { border-width: 0 3px 3px 0; }
+.manual-free-crop-handle.handle-sw::after { border-width: 0 0 3px 3px; }
+.manual-free-crop-handle.handle-n::after,
+.manual-free-crop-handle.handle-s::after {
+  top: 14px;
+  width: 22px;
+  height: 4px;
+  left: 6px;
+  border: 0;
+  background: #fff;
+  border-radius: 2px;
+}
+.manual-free-crop-handle.handle-e::after,
+.manual-free-crop-handle.handle-w::after {
+  left: 14px;
+  height: 22px;
+  width: 4px;
+  top: 6px;
+  border: 0;
+  background: #fff;
+  border-radius: 2px;
+}
 .manual-crop-canvas-wrap {
   position: relative;
   width: 100%;
