@@ -1181,7 +1181,7 @@ html, body {
   background: var(--app-background);
 }
 
-/* Manual step photos and in-browser 4:3 cropper */
+/* Manual step photos and flexible in-browser image cropper */
 .manual-step-body {
   display: flex;
   flex-direction: column;
@@ -1191,7 +1191,6 @@ html, body {
 .manual-step-photo {
   display: block;
   width: min(100%, 360px);
-  aspect-ratio: 4 / 3;
   overflow: hidden;
   border-radius: 12px;
   border: 1px solid rgba(255,255,255,.32);
@@ -1203,7 +1202,8 @@ html, body {
 .manual-step-photo img {
   display: block;
   width: 100%;
-  height: 100%;
+  height: auto;
+  max-height: 75vh;
   object-fit: contain;
 }
 .manual-step-photo:focus-visible,
@@ -1223,9 +1223,9 @@ html, body {
 }
 .manual-image-lightbox img {
   display: block;
-  width: min(100%, 960px);
+  width: auto;
+  max-width: min(100%, 960px);
   max-height: 85vh;
-  aspect-ratio: 4 / 3;
   object-fit: contain;
 }
 .manual-image-lightbox-close {
@@ -1245,8 +1245,11 @@ html, body {
 .manual-item-body { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .manual-item-photo-controls { display: flex; flex-direction: column; gap: 10px; }
 .manual-item-photo-preview {
-  width: min(100%, 300px);
-  aspect-ratio: 4 / 3;
+  display: block;
+  width: auto;
+  max-width: min(100%, 300px);
+  max-height: 300px;
+  height: auto;
   object-fit: contain;
   border: 1px solid rgba(255,255,255,.35);
   background: #111111;
@@ -1297,6 +1300,26 @@ html, body {
 .manual-crop-header h3 { font-size: 19px; font-weight: 850; }
 .manual-crop-close { flex: 0 0 40px; height: 40px; display: flex; align-items: center; justify-content: center; }
 .manual-crop-help { font-size: 12px; color: #ddd; line-height: 1.6; margin: 10px 0 15px; }
+.manual-crop-ratio-options { display: flex; gap: 7px; margin-top: 16px; }
+.manual-crop-ratio-options button {
+  flex: 1; min-width: 0; padding: 10px 6px; border-radius: 9px;
+  border: 1px solid rgba(255,255,255,.42);
+  background: #222; color: #fff; font-size: 13px; font-weight: 650;
+}
+.manual-crop-ratio-options button.is-selected {
+  background: #fff; color: #111; border-color: #fff;
+}
+.manual-crop-custom-ratio {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 9px; margin-top: 12px; font-size: 13px;
+}
+.manual-crop-custom-ratio label { display: flex; align-items: center; gap: 7px; }
+.manual-crop-custom-ratio input {
+  width: 68px; min-height: 40px; padding: 7px; color: #fff;
+  border: 1px solid rgba(255,255,255,.55); border-radius: 8px; background: #111;
+}
+.manual-crop-ratio-caption { color: #bbb; font-size: 11px; }
+.manual-crop-custom-ratio .manual-crop-error { width: 100%; margin: 0; }
 .manual-crop-canvas-wrap {
   position: relative;
   width: 100%;
