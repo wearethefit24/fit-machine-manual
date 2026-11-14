@@ -923,7 +923,8 @@ function ManualImageCropper({ file, onApply, onCancel, square = false }) {
       </>}
       <p className="manual-crop-help">写真を指で動かして位置を調整できます。スライダーで拡大できます。</p>
       <div className={'manual-crop-canvas-wrap' + (square ? ' manual-crop-square' : '')}
-        style={{aspectRatio: `${WIDTH} / ${HEIGHT}`}}>
+        style={{aspectRatio: `${WIDTH} / ${HEIGHT}`,
+          width: `min(100%, ${52 * WIDTH / HEIGHT}vh)`}}>
         <canvas ref={canvasRef} width={WIDTH} height={HEIGHT}
           className="manual-crop-canvas"
           onPointerDown={pointerDown} onPointerMove={pointerMove}
