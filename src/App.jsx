@@ -11,6 +11,7 @@ import {getViewerParentRoute,shouldCompleteSwipe} from './swipeNavigation.js';
 import {manualReturnPath} from './manualNavigation.js';
 import {applyPreferredQrZoom} from './cameraZoom.js';
 import {manualCropSize} from './manualCropSize.js';
+import {INITIAL_FREEFORM_CROP,containedImageBounds,adjustFreeformCrop,freeformOutputSize} from './freeformCrop.js';
 import {resetPageScroll} from './scrollNavigation.js';
 import {loadThumbnail,peekThumbnail,retainThumbnail,releaseThumbnail,warmThumbnails} from './thumbnailCache.js';
 
@@ -811,24 +812,37 @@ const initialFields = { overview: '', adjustment: '', instructions: '', tips: ''
 
 function ManualImageCropper({ file, onApply, onCancel, square = false }) {
   const [cropMode, setCropMode] = useState('4:3');
-  const [customWidth, setCustomWidth] = useState('16');
-  const [customHeight, setCustomHeight] = useState('9');
-  const cropSize = manualCropSize(square ? '1:1' : cropMode, customWidth, customHeight);
-  const WIDTH = cropSize?.width || 1200, HEIGHT = cropSize?.height || 900;
+  const freeform = !square && cropMode === 'custom';
+  const fixedCropSize = manualCropSize(square ? '1:1' : freeform ? '4:3' : cropMode);
+  const WIDTH = fixedCropSize.width, HEIGHT = fixedCropSize.height;
   const canvasRef = useRef(null);
+  const stageRef = useRef(null);
   const imageRef = useRef(null);
   const dragRef = useRef(null);
+  const [imageUrl, setImageUrl] = useState('');
+  const [freeRect, setFreeRect] = useState({...INITIAL_FREEFORM_CROP});
   const [ready, setReady] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const imageBounds = ready && imageRef.current
+    ? containedImageBounds(imageRef.current.naturalWidth,imageRef.current.naturalHeight,WIDTH,HEIGHT)
+    : null;
+  const frameStyle = imageBounds ? {
+    left: 100 * (imageBounds.x + freeRect.x * imageBounds.w) / WIDTH + '%',
+    top: 100 * (imageBounds.y + freeRect.y * imageBounds.h) / HEIGHT + '%',
+    width: 100 * freeRect.w * imageBounds.w / WIDTH + '%',
+    height: 100 * freeRect.h * imageBounds.h / HEIGHT + '%'
+  } : {};
+
   function resetCropPosition() {
     setZoom(1);
     setOffset({ x: 0, y: 0 });
+    setFreeRect({...INITIAL_FREEFORM_CROP});
     setError('');
+    dragRef.current = null;
   }
-
   function constrain(point, nextZoom) {
     const image = imageRef.current;
     if (!image) return point;
@@ -847,15 +861,18 @@ function ManualImageCropper({ file, onApply, onCancel, square = false }) {
     image.onload = () => {
       if (!alive) return;
       imageRef.current = image;
-      setZoom(1);
-      setOffset({ x: 0, y: 0 });
+      setImageUrl(url);
+      resetCropPosition();
       setReady(true);
     };
-    image.onerror = () => { if (alive) setError('この写真を読み込めません。JPEG・PNG・WebP画像をお試しください。'); };
+    image.onerror = () => {
+      if (alive) setError('この写真を読み込めません。JPEG・PNG・WebP画像をお試しください。');
+    };
     image.src = url;
     return () => { alive = false; URL.revokeObjectURL(url); };
   }, [file]);
   useEffect(() => {
+    if (freeform) return;
     const canvas = canvasRef.current;
     const image = imageRef.current;
     if (!ready || !canvas || !image) return;
@@ -867,7 +884,9 @@ function ManualImageCropper({ file, onApply, onCancel, square = false }) {
     ctx.fillStyle = '#111111';
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
     ctx.drawImage(image, (WIDTH - w) / 2 + offset.x, (HEIGHT - h) / 2 + offset.y, w, h);
-  }, [ready, zoom, offset, WIDTH, HEIGHT]);
+  }, [ready, freeform, zoom, offset, WIDTH, HEIGHT]);
+
+  // For the fixed presets, swipe the photo beneath the stationary crop frame.
   function pointerDown(e) {
     if (!ready) return;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -880,13 +899,63 @@ function ManualImageCropper({ file, onApply, onCancel, square = false }) {
     const ratio = WIDTH / Math.max(1, canvasRef.current?.getBoundingClientRect().width || WIDTH);
     setOffset(prev => constrain({ x: prev.x + dx * ratio, y: prev.y + dy * ratio }, zoom));
   }
+
+  // In freeform mode, the crop selection moves and its corners/edges resize
+  // independently, just like the adjustable selection in iPhone Photos.
+  function freePointerDown(e) {
+    if (!ready || !imageBounds) return;
+    e.preventDefault();
+    const handle = e.target.closest('[data-crop-handle]')?.getAttribute('data-crop-handle') || 'move';
+    const stage = stageRef.current?.getBoundingClientRect();
+    if (!stage) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      id: e.pointerId, x: e.clientX, y: e.clientY, handle,
+      stageWidth: stage.width, stageHeight: stage.height,
+      rect: freeRect, bounds: imageBounds
+    };
+  }
+  function freePointerMove(e) {
+    const drag = dragRef.current;
+    if (!drag || drag.id !== e.pointerId) return;
+    e.preventDefault();
+    const dx = (e.clientX - drag.x) * WIDTH / (drag.stageWidth * drag.bounds.w);
+    const dy = (e.clientY - drag.y) * HEIGHT / (drag.stageHeight * drag.bounds.h);
+    setFreeRect(adjustFreeformCrop(drag.rect,drag.handle,dx,dy));
+  }
+  function freeKeyDown(e) {
+    const moves = {ArrowLeft:[-.01,0],ArrowRight:[.01,0],ArrowUp:[0,-.01],ArrowDown:[0,.01]};
+    if (!moves[e.key]) return;
+    e.preventDefault();
+    setFreeRect(prev => adjustFreeformCrop(prev,'move',...moves[e.key]));
+  }
   async function confirm() {
-    if (!ready || saving || !cropSize) return;
+    if (!ready || saving) return;
     setSaving(true);
-    const blob = await new Promise(resolve => canvasRef.current?.toBlob(resolve, 'image/jpeg', .82));
-    if (!blob) { setError('画像を切り取れませんでした。'); setSaving(false); return; }
-    if (blob.size > 2 * 1024 * 1024) { setError('画像の容量が2MiBを超えました。'); setSaving(false); return; }
-    onApply(blob);
+    try {
+      let canvas = canvasRef.current;
+      if (freeform) {
+        const image = imageRef.current;
+        const size = freeformOutputSize(image.naturalWidth,image.naturalHeight,freeRect);
+        if (!size) throw Error('切り取り範囲が正しくありません。');
+        canvas = document.createElement('canvas');
+        canvas.width = size.width;
+        canvas.height = size.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw Error('画像の処理を開始できません。');
+        ctx.drawImage(image,
+          freeRect.x * image.naturalWidth,freeRect.y * image.naturalHeight,
+          freeRect.w * image.naturalWidth,freeRect.h * image.naturalHeight,
+          0,0,size.width,size.height);
+      }
+      const blob = await new Promise(resolve => canvas?.toBlob(resolve, 'image/jpeg', .82));
+      if (!blob) throw Error('画像を切り取れませんでした。');
+      if (blob.size > 2 * 1024 * 1024) throw Error('画像の容量が2MiBを超えました。');
+      onApply(blob);
+    } catch (err) {
+      setError(err?.message || '画像を切り取れませんでした。');
+      setSaving(false);
+    }
   }
   return <div className="manual-crop-backdrop">
     <div className="manual-crop-dialog" role="dialog" aria-modal="true"
@@ -895,55 +964,57 @@ function ManualImageCropper({ file, onApply, onCancel, square = false }) {
         <h3>{square ? '画像を正方形（1:1）に切り取り' : '画像を切り取り'}</h3>
         <button type="button" className="manual-crop-close" onClick={onCancel} aria-label="切り取りをキャンセル"><X size={22}/></button>
       </div>
-      {!square && <>
-        <div className="manual-crop-ratio-options" role="group" aria-label="画像の比率を選択">
-          {['4:3', '1:1', 'custom'].map(option =>
-            <button key={option} type="button"
-              className={cropMode === option ? 'is-selected' : ''}
-              aria-pressed={cropMode === option}
-              onClick={() => {setCropMode(option); resetCropPosition();}}>
-              {option === 'custom' ? 'カスタム' : option}
-            </button>)}
-        </div>
-        {cropMode === 'custom' && <div className="manual-crop-custom-ratio">
-          <label>横
-            <input type="number" inputMode="numeric" min="1" max="99" step="1"
-              value={customWidth} aria-label="横の比率"
-              onChange={e => {setCustomWidth(e.target.value);resetCropPosition();}}/>
-          </label>
-          <span aria-hidden="true">:</span>
-          <label>縦
-            <input type="number" inputMode="numeric" min="1" max="99" step="1"
-              value={customHeight} aria-label="縦の比率"
-              onChange={e => {setCustomHeight(e.target.value);resetCropPosition();}}/>
-          </label>
-          <span className="manual-crop-ratio-caption">例：16:9／3:4</span>
-          {!cropSize && <p className="manual-crop-error" role="alert">横・縦に1〜99の整数を入力してください。</p>}
-        </div>}
-      </>}
-      <p className="manual-crop-help">写真を指で動かして位置を調整できます。スライダーで拡大できます。</p>
-      <div className={'manual-crop-canvas-wrap' + (square ? ' manual-crop-square' : '')}
-        style={{aspectRatio: `${WIDTH} / ${HEIGHT}`,
-          width: `min(100%, ${52 * WIDTH / HEIGHT}vh)`}}>
-        <canvas ref={canvasRef} width={WIDTH} height={HEIGHT}
-          className="manual-crop-canvas"
-          onPointerDown={pointerDown} onPointerMove={pointerMove}
-          onPointerUp={() => { dragRef.current = null; }}
-          onPointerCancel={() => { dragRef.current = null; }}/>
+      {!square && <div className="manual-crop-ratio-options" role="group" aria-label="画像の比率を選択">
+        {['4:3', '1:1', 'custom'].map(option =>
+          <button key={option} type="button"
+            className={cropMode === option ? 'is-selected' : ''}
+            aria-pressed={cropMode === option}
+            onClick={() => {setCropMode(option); resetCropPosition();}}>
+            {option === 'custom' ? 'カスタム' : option}
+          </button>)}
+      </div>}
+      <p className="manual-crop-help">{freeform
+        ? '枠の内側をドラッグして移動、四隅や辺をドラッグして自由に切り取れます。'
+        : '写真を指で動かして位置を調整できます。スライダーで拡大できます。'}</p>
+      <div ref={stageRef} className={'manual-crop-canvas-wrap' + (square ? ' manual-crop-square' : '')}
+        style={{aspectRatio: WIDTH + ' / ' + HEIGHT,
+          width: freeform ? 'min(100%, 65vh)' : 'min(100%, ' + (52 * WIDTH / HEIGHT) + 'vh)'}}>
+        {freeform
+          ? <>
+            {ready && <img className="manual-free-crop-image" draggable={false} src={imageUrl}
+              alt="トリミング対象の写真"/>}
+            {ready && imageBounds && <div className="manual-free-crop-frame"
+              role="group" aria-label="切り取り枠。矢印キーで移動できます。" tabIndex={0}
+              style={frameStyle}
+              onPointerDown={freePointerDown} onPointerMove={freePointerMove}
+              onPointerUp={() => {dragRef.current=null;}}
+              onPointerCancel={() => {dragRef.current=null;}}
+              onKeyDown={freeKeyDown}>
+              <div className="manual-free-crop-grid" aria-hidden="true"/>
+              {['nw','n','ne','e','se','s','sw','w'].map(handle=>
+                <span key={handle} data-crop-handle={handle}
+                  className={'manual-free-crop-handle handle-' + handle} aria-hidden="true"/>)}
+            </div>}
+          </>
+          : <canvas ref={canvasRef} width={WIDTH} height={HEIGHT}
+              className="manual-crop-canvas"
+              onPointerDown={pointerDown} onPointerMove={pointerMove}
+              onPointerUp={() => { dragRef.current = null; }}
+              onPointerCancel={() => { dragRef.current = null; }}/>}
         {!ready && !error && <span className="manual-crop-loading">画像を読み込んでいます…</span>}
       </div>
-      <label className="manual-crop-zoom"><ZoomIn size={18}/> 拡大
+      {!freeform && <label className="manual-crop-zoom"><ZoomIn size={18}/> 拡大
         <input type="range" min="1" max="3" step=".05" value={zoom} disabled={!ready}
           onChange={e => {
             const next = Number(e.target.value);
             setOffset(prev => constrain(prev, next));
             setZoom(next);
           }}/>
-      </label>
+      </label>}
       {error && <p className="manual-crop-error" role="alert">{error}</p>}
       <div className="manual-crop-actions">
         <button type="button" className="btn btn-secondary" onClick={onCancel}>キャンセル</button>
-        <button type="button" className="btn btn-primary" disabled={!ready || saving || !cropSize} onClick={confirm}>
+        <button type="button" className="btn btn-primary" disabled={!ready || saving} onClick={confirm}>
           {saving ? '処理中…' : 'この範囲で決定'}
         </button>
       </div>
