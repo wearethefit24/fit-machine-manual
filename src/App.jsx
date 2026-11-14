@@ -10,6 +10,7 @@ import QRCode from 'qrcode';
 import {getViewerParentRoute,shouldCompleteSwipe} from './swipeNavigation.js';
 import {manualReturnPath} from './manualNavigation.js';
 import {applyPreferredQrZoom} from './cameraZoom.js';
+import {manualCropSize} from './manualCropSize.js';
 import {resetPageScroll} from './scrollNavigation.js';
 import {loadThumbnail,peekThumbnail,retainThumbnail,releaseThumbnail,warmThumbnails} from './thumbnailCache.js';
 
@@ -809,7 +810,11 @@ const initialFields = { overview: '', adjustment: '', instructions: '', tips: ''
 
 
 function ManualImageCropper({ file, onApply, onCancel, square = false }) {
-  const WIDTH = square ? 900 : 1200, HEIGHT = 900;
+  const [cropMode, setCropMode] = useState('4:3');
+  const [customWidth, setCustomWidth] = useState('16');
+  const [customHeight, setCustomHeight] = useState('9');
+  const cropSize = manualCropSize(square ? '1:1' : cropMode, customWidth, customHeight);
+  const WIDTH = cropSize?.width || 1200, HEIGHT = cropSize?.height || 900;
   const canvasRef = useRef(null);
   const imageRef = useRef(null);
   const dragRef = useRef(null);
@@ -818,6 +823,11 @@ function ManualImageCropper({ file, onApply, onCancel, square = false }) {
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  function resetCropPosition() {
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+    setError('');
+  }
 
   function constrain(point, nextZoom) {
     const image = imageRef.current;
@@ -857,7 +867,7 @@ function ManualImageCropper({ file, onApply, onCancel, square = false }) {
     ctx.fillStyle = '#111111';
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
     ctx.drawImage(image, (WIDTH - w) / 2 + offset.x, (HEIGHT - h) / 2 + offset.y, w, h);
-  }, [ready, zoom, offset]);
+  }, [ready, zoom, offset, WIDTH, HEIGHT]);
   function pointerDown(e) {
     if (!ready) return;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -871,7 +881,7 @@ function ManualImageCropper({ file, onApply, onCancel, square = false }) {
     setOffset(prev => constrain({ x: prev.x + dx * ratio, y: prev.y + dy * ratio }, zoom));
   }
   async function confirm() {
-    if (!ready || saving) return;
+    if (!ready || saving || !cropSize) return;
     setSaving(true);
     const blob = await new Promise(resolve => canvasRef.current?.toBlob(resolve, 'image/jpeg', .82));
     if (!blob) { setError('画像を切り取れませんでした。'); setSaving(false); return; }
@@ -880,13 +890,40 @@ function ManualImageCropper({ file, onApply, onCancel, square = false }) {
   }
   return <div className="manual-crop-backdrop">
     <div className="manual-crop-dialog" role="dialog" aria-modal="true"
-      aria-label={square ? '画像を正方形に切り取る' : '画像を4対3に切り取る'}>
+      aria-label={square ? '画像を正方形に切り取る' : '画像の切り取り'}>
       <div className="manual-crop-header">
-        <h3>{square ? '画像を正方形（1:1）に切り取り' : '画像を4:3に切り取り'}</h3>
+        <h3>{square ? '画像を正方形（1:1）に切り取り' : '画像を切り取り'}</h3>
         <button type="button" className="manual-crop-close" onClick={onCancel} aria-label="切り取りをキャンセル"><X size={22}/></button>
       </div>
+      {!square && <>
+        <div className="manual-crop-ratio-options" role="group" aria-label="画像の比率を選択">
+          {['4:3', '1:1', 'custom'].map(option =>
+            <button key={option} type="button"
+              className={cropMode === option ? 'is-selected' : ''}
+              aria-pressed={cropMode === option}
+              onClick={() => {setCropMode(option); resetCropPosition();}}>
+              {option === 'custom' ? 'カスタム' : option}
+            </button>)}
+        </div>
+        {cropMode === 'custom' && <div className="manual-crop-custom-ratio">
+          <label>横
+            <input type="number" inputMode="numeric" min="1" max="99" step="1"
+              value={customWidth} aria-label="横の比率"
+              onChange={e => {setCustomWidth(e.target.value);resetCropPosition();}}/>
+          </label>
+          <span aria-hidden="true">:</span>
+          <label>縦
+            <input type="number" inputMode="numeric" min="1" max="99" step="1"
+              value={customHeight} aria-label="縦の比率"
+              onChange={e => {setCustomHeight(e.target.value);resetCropPosition();}}/>
+          </label>
+          <span className="manual-crop-ratio-caption">例：16:9／3:4</span>
+          {!cropSize && <p className="manual-crop-error" role="alert">横・縦に1〜99の整数を入力してください。</p>}
+        </div>}
+      </>}
       <p className="manual-crop-help">写真を指で動かして位置を調整できます。スライダーで拡大できます。</p>
-      <div className={'manual-crop-canvas-wrap' + (square ? ' manual-crop-square' : '')}>
+      <div className={'manual-crop-canvas-wrap' + (square ? ' manual-crop-square' : '')}
+        style={{aspectRatio: `${WIDTH} / ${HEIGHT}`}}>
         <canvas ref={canvasRef} width={WIDTH} height={HEIGHT}
           className="manual-crop-canvas"
           onPointerDown={pointerDown} onPointerMove={pointerMove}
@@ -905,7 +942,7 @@ function ManualImageCropper({ file, onApply, onCancel, square = false }) {
       {error && <p className="manual-crop-error" role="alert">{error}</p>}
       <div className="manual-crop-actions">
         <button type="button" className="btn btn-secondary" onClick={onCancel}>キャンセル</button>
-        <button type="button" className="btn btn-primary" disabled={!ready || saving} onClick={confirm}>
+        <button type="button" className="btn btn-primary" disabled={!ready || saving || !cropSize} onClick={confirm}>
           {saving ? '処理中…' : 'この範囲で決定'}
         </button>
       </div>
@@ -956,7 +993,7 @@ function ManualItemsEditor({ title, field, value, onChange, onCrop, imagePreview
                 alt={title + ' ' + marker(index) + ' に添付した画像'}/>}
               <div className="manual-item-photo-buttons">
                 <label className="manual-image-pick">
-                  <ImagePlus size={16}/>{item.imageId ? '画像を変更' : '画像を追加（4:3）'}
+                  <ImagePlus size={16}/>{item.imageId ? '画像を変更' : '画像を追加（比率選択）'}
                   <input type="file" accept="image/*" className="sr-only"
                     onChange={e => {
                       const chosen = e.target.files?.[0];
