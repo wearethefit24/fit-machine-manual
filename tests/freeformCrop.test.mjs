@@ -18,7 +18,11 @@ test('dragging selection moves it without resizing and keeps it in the image',()
 });
 test('corners and edges resize without a fixed aspect ratio',()=>{
   const crop={x:.2,y:.2,w:.4,h:.4};
-  assert.deepEqual(adjustFreeformCrop(crop,'se',.2,-.1),{x:.2,y:.2,w:.6000000000000001,h:.30000000000000004});
+  const expandedCorner=adjustFreeformCrop(crop,'se',.2,-.1);
+  assert.equal(expandedCorner.x,.2);
+  assert.equal(expandedCorner.y,.2);
+  assert.ok(Math.abs(expandedCorner.w-.6)<1e-8);
+  assert.ok(Math.abs(expandedCorner.h-.3)<1e-8);
   const left=adjustFreeformCrop(crop,'w',.1,0);
   assert.ok(Math.abs(left.w-.3)<1e-8);
   assert.equal(left.h,.4);
