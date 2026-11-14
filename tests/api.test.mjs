@@ -60,6 +60,56 @@ test('public reading is allowed and admin changes require authentication', async
   assert.equal((await fetchApi('/api/admin/session')).status, 200);
 });
 
+test('store and per-store area reorder persist in public and admin catalogs', async()=>{
+  const {env,fetchApi}=fixture();
+  const unauthorized=await fetchApi('/api/admin/stores/reorder','POST',{ids:[crypto.randomUUID()]});
+  assert.equal(unauthorized.status,401);
+  await fetchApi('/api/admin/login','POST',{password:env.ADMIN_PASSWORD});
+  const stores=[];
+  for(const name of ['A店','B店','C店']){
+    stores.push((await (await fetchApi('/api/admin/stores','POST',{name})).json()).id);
+  }
+  const first=[];
+  for(const name of ['A1','A2','A3']){
+    first.push((await (await fetchApi('/api/admin/areas','POST',
+      {name,storeId:stores[0]})).json()).id);
+  }
+  const second=[];
+  for(const name of ['B1','B2']){
+    second.push((await (await fetchApi('/api/admin/areas','POST',
+      {name,storeId:stores[1]})).json()).id);
+  }
+  const orderStores=[stores[2],stores[0],stores[1]];
+  assert.equal((await fetchApi('/api/admin/stores/reorder','POST',{ids:orderStores})).status,200);
+  let data=await (await fetchApi('/api/catalog')).json();
+  assert.deepEqual(data.stores.map(s=>s.id),orderStores);
+  assert.deepEqual((await (await fetchApi('/api/admin/catalog')).json()).stores.map(s=>s.id),orderStores);
+  const orderAreas=[first[2],first[0],first[1]];
+  assert.equal((await fetchApi('/api/admin/areas/reorder','POST',
+    {storeId:stores[0],ids:orderAreas})).status,200);
+  data=await (await fetchApi('/api/catalog')).json();
+  assert.deepEqual(data.areas.filter(a=>a.storeId===stores[0]).map(a=>a.id),orderAreas);
+  assert.deepEqual(data.areas.filter(a=>a.storeId===stores[1]).map(a=>a.id),second);
+  assert.deepEqual((await (await fetchApi('/api/admin/catalog')).json()).areas
+    .filter(a=>a.storeId===stores[0]).map(a=>a.id),orderAreas);
+
+  // Reject stale/partial orders, duplicates and area IDs from another store.
+  assert.equal((await fetchApi('/api/admin/stores/reorder','POST',
+    {ids:[stores[0]]})).status,409);
+  assert.equal((await fetchApi('/api/admin/stores/reorder','POST',
+    {ids:[stores[0],stores[0],stores[1]]})).status,409);
+  assert.equal((await fetchApi('/api/admin/areas/reorder','POST',
+    {storeId:stores[0],ids:[first[0],first[1],second[0]]})).status,409);
+  assert.equal((await fetchApi('/api/admin/areas/reorder','POST',
+    {storeId:stores[0],ids:[first[0],first[0],first[1]]})).status,409);
+  assert.equal((await fetchApi('/api/admin/areas/reorder','POST',
+    {storeId:'invalid',ids:first})).status,400);
+  // A failed reorder must not change the previously saved orders.
+  data=await (await fetchApi('/api/catalog')).json();
+  assert.deepEqual(data.stores.map(s=>s.id),orderStores);
+  assert.deepEqual(data.areas.filter(a=>a.storeId===stores[0]).map(a=>a.id),orderAreas);
+});
+
 test('store, area, machine CRUD, ordering, video retirement and cascade deletion', async () => {
   const { env, fetchApi } = fixture();
   await fetchApi('/api/admin/login', 'POST', { password: env.ADMIN_PASSWORD });
