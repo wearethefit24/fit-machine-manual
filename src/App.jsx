@@ -675,6 +675,22 @@ function QRPanel({ machine, isPublic = true }) {
 }
 function StoresAdmin({ catalog, refresh, notify, tidy }) {
   const [editing, setEditing] = useState(null); const [name, setName] = useState(''); const [pending, setPending] = useState(false);
+  const [sorting, setSorting] = useState(false);
+  async function moveStore(store, amount) {
+    if (sorting) return;
+    const current = catalog.stores.findIndex(item => item.id === store.id);
+    const target = current + amount;
+    if (current < 0 || target < 0 || target >= catalog.stores.length) return;
+    const ids = catalog.stores.map(item => item.id);
+    [ids[current], ids[target]] = [ids[target], ids[current]];
+    setSorting(true);
+    try {
+      await send('/api/admin/stores/reorder','POST',{ids});
+      await refresh();
+      notify('店舗の表示順を変更しました。');
+    } catch (error) { notify(error.message,true); }
+    finally { setSorting(false); }
+  }
   function reset() { setEditing(null); setName(''); }
   async function save() {
     try { setPending(true); await send(editing ? `/api/admin/stores/${editing}` : '/api/admin/stores', editing ? 'PATCH' : 'POST', { name }); await refresh(); reset(); notify('店舗を保存しました。'); }
@@ -687,7 +703,25 @@ function StoresAdmin({ catalog, refresh, notify, tidy }) {
   return <div className="space-y-4"><div className="admin-card"><h3 className="card-title">{editing ? '店舗を編集' : '店舗を追加'}</h3><Field title="店舗名"><input className={fieldInput} value={name} onChange={e => setName(e.target.value)} maxLength={80} placeholder="例：江古田店"/></Field><div className="flex gap-2 mt-4"><Action onClick={save} pending={pending} className="flex-1">{editing ? '変更を保存' : '店舗を登録'}</Action>{editing && <button onClick={reset} className="btn btn-secondary"><X size={17}/>取消</button>}</div></div>
   <div className="admin-card"><h3 className="card-title">登録済み店舗 <span className="count">{catalog.stores.length}</span></h3>{catalog.stores.length ? catalog.stores.map(s => <div key={s.id} className="admin-row"><span className="row-icon"><MapPin size={18}/></span><div className="flex-1 min-w-0"><p className="font-medium text-white truncate">{s.name}</p><p className="text-xs text-neutral-300 mt-0.5">{catalog.areas.filter(a => a.storeId === s.id).length} エリア</p></div><VisibilityToggle isPublic={s.isPublic!==false}
   onChange={next=>changeVisibility('store',[s.id],next,refresh,notify)} label={s.name}/>
-  <SmallActions onEdit={() => { setEditing(s.id); setName(s.name); }} onDelete={() => remove(s)}/></div>) : <Empty title="店舗はまだありません" description="まず店舗を登録してください。"/>}</div></div>;
+  <SmallActions onEdit={() => { setEditing(s.id); setName(s.name); }} onDelete={() => remove(s)}/></div>) : <Empty title="店舗はまだありません" description="まず店舗を登録してください。"/>}
+  {catalog.stores.length > 1 && <details className="machine-sort-details">
+    <summary>店舗の表示順を変更</summary>
+    <p className="manual-multistore-note">店舗選択画面の並び順を変更できます。</p>
+    {catalog.stores.map((store,index)=><div className="machine-row" key={store.id}>
+      <div className="flex flex-col gap-1.5">
+        <button type="button" aria-label={store.name+'を上へ'} className="arrow-button"
+          disabled={sorting || index === 0} onClick={()=>moveStore(store,-1)}>
+          <ArrowUp size={17}/>
+        </button>
+        <button type="button" aria-label={store.name+'を下へ'} className="arrow-button"
+          disabled={sorting || index === catalog.stores.length - 1}
+          onClick={()=>moveStore(store,1)}><ArrowDown size={17}/></button>
+      </div>
+      <span className="text-xs font-bold text-neutral-300 w-6 text-center">{num(index)}</span>
+      <span className="font-semibold text-white flex-1 min-w-0">{store.name}</span>
+    </div>)}
+  </details>}
+  </div></div>;
 }
 function AreasAdmin({ catalog, refresh, notify, tidy }) {
   const [editing, setEditing] = useState(null);
@@ -695,6 +729,25 @@ function AreasAdmin({ catalog, refresh, notify, tidy }) {
   const [storeId, setStoreId] = useState('');
   const [selectedStoreIds, setSelectedStoreIds] = useState([]);
   const [pending, setPending] = useState(false);
+  const [sortStoreId,setSortStoreId] = useState('');
+  const [sorting,setSorting] = useState(false);
+  const sortStore = catalog.stores.find(item => item.id === sortStoreId) || catalog.stores[0];
+  const sortedAreas = catalog.areas.filter(item => item.storeId === sortStore?.id);
+  async function moveArea(area, amount) {
+    if (sorting || !sortStore) return;
+    const current = sortedAreas.findIndex(item => item.id === area.id);
+    const target = current + amount;
+    if (current < 0 || target < 0 || target >= sortedAreas.length) return;
+    const ids = sortedAreas.map(item => item.id);
+    [ids[current],ids[target]] = [ids[target],ids[current]];
+    setSorting(true);
+    try {
+      await send('/api/admin/areas/reorder','POST',{storeId:sortStore.id,ids});
+      await refresh();
+      notify('エリアの表示順を変更しました。');
+    } catch (error) { notify(error.message,true); }
+    finally { setSorting(false); }
+  }
   const selectedStore = storeId || catalog.stores[0]?.id || '';
   function reset() {
     setEditing(null);
@@ -804,6 +857,32 @@ function AreasAdmin({ catalog, refresh, notify, tidy }) {
         }} onDelete={() => remove(a)}/>
       </div>) : <Empty title="エリアはまだありません"
         description="店舗を登録した後、エリアを追加してください。"/>}
+      {!!catalog.areas.length && <details className="machine-sort-details">
+        <summary>エリアの表示順を変更</summary>
+        <div className="space-y-4 pt-4">
+          <Field title="店舗を選択">
+            <select className={fieldInput} value={sortStore?.id || ''}
+              disabled={sorting} onChange={event=>setSortStoreId(event.target.value)}>
+              {catalog.stores.map(store=><option key={store.id} value={store.id}>{store.name}</option>)}
+            </select>
+          </Field>
+          <p className="manual-multistore-note">選択した店舗のエリア選択画面に表示する順番を変更します。</p>
+          {sortedAreas.map((area,index)=><div className="machine-row" key={area.id}>
+            <div className="flex flex-col gap-1.5">
+              <button type="button" aria-label={area.name+'を上へ'} className="arrow-button"
+                disabled={sorting || index === 0} onClick={()=>moveArea(area,-1)}>
+                <ArrowUp size={17}/>
+              </button>
+              <button type="button" aria-label={area.name+'を下へ'} className="arrow-button"
+                disabled={sorting || index === sortedAreas.length-1}
+                onClick={()=>moveArea(area,1)}><ArrowDown size={17}/></button>
+            </div>
+            <span className="text-xs font-bold text-neutral-300 w-6 text-center">{num(index)}</span>
+            <span className="font-semibold text-white flex-1 min-w-0">{area.name}</span>
+          </div>)}
+          {!sortedAreas.length && <p className="manual-multistore-note">この店舗にはエリアがありません。</p>}
+        </div>
+      </details>}
     </div>
   </div>;
 }
