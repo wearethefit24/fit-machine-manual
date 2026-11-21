@@ -422,6 +422,29 @@ function MachineChoiceImage({ machineId }) {
       alt="" loading="eager" decoding="async" fetchPriority="high"/>}
   </span>;
 }
+
+function MachineChoiceName({ name }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return undefined;
+    const fitText = () => {
+      element.classList.remove('is-compact');
+      if (element.scrollWidth > element.clientWidth) {
+        element.classList.add('is-compact');
+      }
+    };
+    fitText();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', fitText);
+      return () => window.removeEventListener('resize', fitText);
+    }
+    const observer = new ResizeObserver(fitText);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [name]);
+  return <span ref={ref} className="viewer-machine-name">{name}</span>;
+}
 function Viewer({ catalog, loading, error, route, navigate, refresh }) {
   const ids = route.split('/').filter(Boolean);
   const isMachinePage = ids[0] === 'machine';
@@ -566,7 +589,7 @@ function Viewer({ catalog, loading, error, route, navigate, refresh }) {
                 })}
                 aria-label={item.name + 'の取扱説明書を開く'}>
                 <MachineChoiceImage machineId={item.id}/>
-                <span className="viewer-machine-name">{item.name}</span>
+                <MachineChoiceName name={item.name}/>
               </button>)}
             </div>
           : <Empty title="マシンが登録されていません" description="店舗スタッフによる登録をお待ちください。"/>}
