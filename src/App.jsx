@@ -429,9 +429,15 @@ function MachineChoiceName({ name }) {
     const element = ref.current;
     if (!element) return undefined;
     const fitText = () => {
-      element.classList.remove('is-compact');
+      let size = 19;
+      element.style.fontSize = `${size}px`;
       if (element.scrollWidth > element.clientWidth) {
-        element.classList.add('is-compact');
+        size = 17;
+        element.style.fontSize = `${size}px`;
+        while (size > 9 && element.scrollWidth > element.clientWidth) {
+          size -= 1;
+          element.style.fontSize = `${size}px`;
+        }
       }
     };
     fitText();
