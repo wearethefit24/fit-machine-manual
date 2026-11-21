@@ -1882,6 +1882,7 @@ html, body {
   container-type: inline-size;
 }
 .viewer-machine-name {
+  display: block;
   width: 100%;
   min-width: 0;
   white-space: nowrap;
@@ -1889,7 +1890,4 @@ html, body {
   text-overflow: ellipsis;
   overflow-wrap: normal;
   font-size: 19px;
-}
-.viewer-machine-name.is-compact {
-  font-size: 17px;
 }
